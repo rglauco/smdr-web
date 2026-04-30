@@ -1,0 +1,20 @@
+# SMDR TCP Server - Dockerfile
+FROM python:3.14-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only what the TCP server needs
+COPY server/ ./server/
+COPY database.py ./database.py
+
+RUN mkdir -p /app/data /app/data/reports
+
+EXPOSE 3000
+
+CMD ["python", "-u", "server/tcpsmdrserver.py"]

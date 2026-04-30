@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMDR — Call Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #3b5998;
+            --primary-light: #4a6fb5;
+            --primary-dark: #2d4373;
+            --accent: #00b894;
+            --accent-warm: #e17055;
+            --accent-blue: #0984e3;
+            --accent-red: #d63031;
+            --bg: #f0f2f5;
+            --surface: #ffffff;
+            --text: #1a1a2e;
+            --text-secondary: #636e72;
+            --text-muted: #b2bec3;
+            --border: #dfe6e9;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+            --shadow: 0 2px 8px rgba(0,0,0,.08);
+            --shadow-lg: 0 4px 20px rgba(0,0,0,.1);
+            --radius: 10px;
+            --radius-sm: 6px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Navbar ─────────────────────────────────────── */
+        .navbar {
+            background: var(--primary-dark);
+            padding: 0 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 56px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,.15);
+        }
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            gap: .6rem;
+            color: #fff;
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: .5px;
+            text-decoration: none;
+        }
+        .navbar-brand svg {
+            width: 26px; height: 26px;
+        }
+        .navbar-meta {
+            color: rgba(255,255,255,.6);
+            font-size: .8rem;
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+        }
+        .navbar-meta span { display: flex; align-items: center; gap: .35rem; }
+
+        /* ── Layout ─────────────────────────────────────── */
+        .container {
+            width: 100%;
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        /* ── Stats row ──────────────────────────────────── */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        @media (max-width: 1100px) { .stats-row { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 600px)  { .stats-row { grid-template-columns: 1fr 1fr; } }
+
+        .stat-card {
+            background: var(--surface);
+            padding: 1.25rem 1.5rem;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            transition: box-shadow .2s, transform .15s;
+        }
+        .stat-card:hover {
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-2px);
+        }
+        .stat-icon {
+            width: 36px; height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: .75rem;
+        }
+        .stat-icon svg { width: 18px; height: 18px; }
+        .stat-icon.total  { background: rgba(59,89,152,.12); color: var(--primary); }
+        .stat-icon.in     { background: rgba(0,184,148,.12); color: var(--accent); }
+        .stat-icon.out    { background: rgba(225,112,85,.12); color: var(--accent-warm); }
+        .stat-icon.int    { background: rgba(9,132,227,.12); color: var(--accent-blue); }
+        .stat-icon.ext    { background: rgba(214,48,49,.12); color: var(--accent-red); }
+        .stat-icon.dur    { background: rgba(108,92,231,.12); color: #6c5ce7; }
+
+        .stat-label {
+            font-size: .72rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-bottom: .35rem;
+        }
+        .stat-value {
+            font-size: 1.65rem;
+            font-weight: 800;
+            color: var(--text);
+            line-height: 1.1;
+        }
+
+        /* ── Section heading ─────────────────────────────── */
+        .section {
+            margin-top: 2rem;
+        }
+        .section-heading {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text);
+            padding-bottom: .5rem;
+            border-bottom: 2px solid var(--primary);
+            display: inline-block;
+            margin-bottom: 1rem;
+        }
+
+        /* ── Charts ──────────────────────────────────────── */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+        }
+        @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+
+        .chart-card {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .chart-title {
+            font-size: .85rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 1rem;
+            padding-bottom: .6rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* ── Search panel ────────────────────────────────── */
+        .search-panel {
+            background: var(--surface);
+            padding: 1.5rem 2rem;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            margin-top: 2rem;
+        }
+        .search-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label {
+            font-size: .75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: .35rem;
+        }
+        .form-group input,
+        .form-group select {
+            padding: .6rem .75rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: .875rem;
+            color: var(--text);
+            background: #fafbfc;
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59,89,152,.12);
+            background: #fff;
+        }
+
+        /* ── Buttons ─────────────────────────────────────── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: .4rem;
+            padding: .6rem 1.4rem;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: .875rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .15s, box-shadow .15s, transform .1s;
+        }
+        .btn:active { transform: scale(.97); }
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+        }
+        .btn-primary:hover {
+            background: var(--primary-light);
+            box-shadow: 0 2px 8px rgba(59,89,152,.3);
+        }
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { background: #e8eaed; }
+
+        /* ── Results table ────────────────────────────────── */
+        .results-panel {
+            background: var(--surface);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            margin-top: 1.5rem;
+            overflow: hidden;
+        }
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: #fafbfc;
+        }
+        .results-header h3 {
+            font-size: .85rem;
+            font-weight: 700;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+        .results-count {
+            font-size: .8rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            padding: .7rem 1rem;
+            font-size: .7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .7px;
+            color: var(--text-secondary);
+            background: #f8f9fb;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+        }
+        td {
+            padding: .65rem 1rem;
+            font-size: .85rem;
+            color: var(--text);
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        tr:last-child td { border-bottom: none; }
+        tbody tr { transition: background .12s; }
+        tbody tr:hover { background: #f5f7fa; }
+
+        .badge {
+            display: inline-block;
+            padding: .2rem .6rem;
+            border-radius: 999px;
+            font-size: .7rem;
+            font-weight: 700;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+        }
+        .badge-inbound  { background: rgba(0,184,148,.14); color: #00996b; }
+        .badge-outbound { background: rgba(225,112,85,.14); color: #c0402a; }
+
+        .id-muted { font-size: .7rem; color: var(--text-muted); }
+
+        /* ── Pagination / Load more ──────────────────────── */
+        .load-more-row {
+            display: flex;
+            justify-content: center;
+            padding: 1.25rem;
+            border-top: 1px solid var(--border);
+        }
+
+        /* ── Loading / Error ──────────────────────────────── */
+        .loading-box {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+        .spinner {
+            display: inline-block;
+            width: 28px; height: 28px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin .7s linear infinite;
+            margin-bottom: .75rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .error-box {
+            background: #fff5f5;
+            color: #c53030;
+            padding: .85rem 1rem;
+            border-radius: var(--radius-sm);
+            border-left: 4px solid #c53030;
+            font-size: .875rem;
+        }
+
+        /* ── Footer ──────────────────────────────────────── */
+        footer {
+            margin-top: auto;
+            padding: 1.5rem 0;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: .75rem;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+        footer a { color: var(--primary); text-decoration: none; }
+
+        /* ── Empty state ─────────────────────────────────── */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-muted);
+        }
+        .empty-state svg { width: 48px; height: 48px; margin-bottom: .75rem; opacity: .4; }
+
+        /* ── Fade-in animation ────────────────────────────── */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up { animation: fadeUp .4s ease both; }
+        .delay-1 { animation-delay: .05s; }
+        .delay-2 { animation-delay: .10s; }
+        .delay-3 { animation-delay: .15s; }
+        .delay-4 { animation-delay: .20s; }
+        .delay-5 { animation-delay: .25s; }
+    </style>
+</head>
+<body>
+
+<!-- ═══ Navbar ═══ -->
+<nav class="navbar">
+    <a class="navbar-brand" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+        </svg>
+        SMDR Analytics
+    </a>
+    <div class="navbar-meta">
+        <span id="navTotal">—</span>
+        <a href="/logout" style="color:rgba(255,255,255,.7);text-decoration:none;font-size:.8rem;display:flex;align-items:center;gap:.3rem;border:1px solid rgba(255,255,255,.25);padding:.3rem .7rem;border-radius:4px;transition:all .15s;" onmouseover="this.style.borderColor='rgba(255,255,255,.6)';this.style.color='#fff'" onmouseout="this.style.borderColor='rgba(255,255,255,.25)';this.style.color='rgba(255,255,255,.7)'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Esci
+        </a>
+    </div>
+</nav>
+
+<div class="container">
+
+    <!-- ═══ Stats ═══ -->
+    <div class="stats-row" id="statsRow">
+        <div class="stat-card fade-up delay-1">
+            <div class="stat-icon total">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div class="stat-label">Totale Chiamate</div>
+            <div class="stat-value" id="totalCalls">—</div>
+        </div>
+        <div class="stat-card fade-up delay-2">
+            <div class="stat-icon in">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 10 12 15 7 10"/><line x1="12" y1="3" x2="12" y2="15"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+            </div>
+            <div class="stat-label">Inbound</div>
+            <div class="stat-value" id="inboundCalls">—</div>
+        </div>
+        <div class="stat-card fade-up delay-2">
+            <div class="stat-icon out">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 14 12 9 17 14"/><line x1="12" y1="21" x2="12" y2="9"/><path d="M3 9v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4"/></svg>
+            </div>
+            <div class="stat-label">Outbound</div>
+            <div class="stat-value" id="outboundCalls">—</div>
+        </div>
+        <div class="stat-card fade-up delay-3">
+            <div class="stat-icon int">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <div class="stat-label">Interne</div>
+            <div class="stat-value" id="internalCalls">—</div>
+        </div>
+        <div class="stat-card fade-up delay-3">
+            <div class="stat-icon ext">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            </div>
+            <div class="stat-label">Esterne</div>
+            <div class="stat-value" id="externalCalls">—</div>
+        </div>
+        <div class="stat-card fade-up delay-4">
+            <div class="stat-icon dur">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="stat-label">Durata Totale (ore)</div>
+            <div class="stat-value" id="totalDuration">—</div>
+        </div>
+    </div>
+
+    <!-- ═══ Charts ═══ -->
+    <div class="section">
+        <div class="section-heading">Analisi Mensile &amp; Direzione</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-3">
+            <div class="chart-title">Chiamate per Mese</div>
+            <canvas id="callsByMonthChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-3">
+            <div class="chart-title">Chiamate per Direzione</div>
+            <canvas id="callsByDirectionChart"></canvas>
+        </div>
+    </div>
+
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Top Clienti &amp; Numeri Chiamati</div>
+    </div>
+    <div class="charts-grid" style="margin-bottom:0">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">Top Account</div>
+            <canvas id="topClientsChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">Top Numeri Chiamati</div>
+            <canvas id="topDialedChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ═══ Search ═══ -->
+    <div class="section">
+        <div class="section-heading">Ricerca Chiamate</div>
+    </div>
+    <div class="search-panel fade-up delay-5">
+        <div class="search-grid">
+            <div class="form-group">
+                <label for="callDirection">Direzione</label>
+                <select id="callDirection">
+                    <option value="">Tutte</option>
+                    <option value="Inbound">Inbound</option>
+                    <option value="Outbound">Outbound</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="start-date">Data Inizio</label>
+                <input type="date" id="start-date">
+            </div>
+            <div class="form-group">
+                <label for="end-date">Data Fine</label>
+                <input type="date" id="end-date">
+            </div>
+            <div class="form-group">
+                <label for="dialedNumber">Numero Chiamato</label>
+                <input type="text" id="dialedNumber" placeholder="Es: 02…">
+            </div>
+            <div class="form-group">
+                <label for="caller">Chiamante</label>
+                <input type="text" id="caller" placeholder="Es: 201">
+            </div>
+            <div class="form-group">
+                <label for="account">Account</label>
+                <input type="text" id="account" placeholder="Es: 100">
+            </div>
+            <div class="form-group" style="flex-direction:row; gap:.5rem; align-self:end;">
+                <button class="btn btn-primary" onclick="searchCalls()">Cerca</button>
+                <button class="btn btn-secondary" onclick="resetSearch()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Results ═══ -->
+    <div id="loadingBox" class="loading-box">
+        <div class="spinner"></div>
+        <div>Caricamento dati…</div>
+    </div>
+
+    <div class="results-panel" id="resultsContainer" style="display:none; margin-top:1.5rem;">
+        <div class="results-header">
+            <h3>Risultati</h3>
+            <span class="results-count" id="resultsCount"></span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data Inizio</th>
+                        <th>Direzione</th>
+                        <th>Chiamante</th>
+                        <th>Numero Chiamato</th>
+                        <th>Account</th>
+                        <th>Connessione</th>
+                        <th>Suono</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody"></tbody>
+            </table>
+        </div>
+        <div class="load-more-row" id="loadMoreContainer" style="display:none">
+            <button class="btn btn-secondary" onclick="loadMore()">Carica altri risultati</button>
+        </div>
+    </div>
+
+</div><!-- /container -->
+
+<footer>
+    <div class="container">
+        SMDR Call Analytics &mdash; <a href="/">Dashboard</a>
+    </div>
+</footer>
+
+<script>
+    let currentPage = 0;
+    let currentTotal = 0;
+    let currentFilters = {};
+
+    /* ── Chart.js global defaults ─────────────────────── */
+    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif";
+    Chart.defaults.font.size = 12;
+    Chart.defaults.color = '#636e72';
+    Chart.defaults.plugins.legend.labels.usePointStyle = true;
+    Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
+
+    /* ── Init ─────────────────────────────────────────── */
+    document.addEventListener('DOMContentLoaded', () => {
+        loadStats();
+        searchCalls();
+    });
+
+    async function loadStats() {
+        try {
+            const response = await fetch('/statistics');
+            const stats = await response.json();
+
+            const fmt = n => n != null ? n.toLocaleString('it-IT') : '0';
+            document.getElementById('totalCalls').textContent    = fmt(stats.total_calls);
+            document.getElementById('inboundCalls').textContent  = fmt(stats.by_direction?.Inbound || 0);
+            document.getElementById('outboundCalls').textContent = fmt(stats.by_direction?.Outbound || 0);
+            document.getElementById('internalCalls').textContent = fmt(stats.by_internal?.Yes || stats.by_internal?.Internal || 0);
+            document.getElementById('externalCalls').textContent = fmt(stats.by_internal?.No || 0);
+            document.getElementById('totalDuration').textContent = (stats.total_duration_hours || 0).toFixed(2);
+            document.getElementById('navTotal').textContent     = `${fmt(stats.total_calls)} chiamate totali`;
+
+            // ── Monthly line ──
+            new Chart(document.getElementById('callsByMonthChart'), {
+                type: 'bar',
+                data: {
+                    labels: stats.by_month.map(m => m.month),
+                    datasets: [{
+                        label: 'Chiamate',
+                        data: stats.by_month.map(m => m.count),
+                        backgroundColor: 'rgba(59,89,152,.75)',
+                        borderRadius: 4,
+                        borderSkipped: false,
+                        maxBarThickness: 32,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f0f2f5' } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+
+            // ── Direction doughnut ──
+            new Chart(document.getElementById('callsByDirectionChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(stats.by_direction),
+                    datasets: [{
+                        data: Object.values(stats.by_direction),
+                        backgroundColor: ['#00b894', '#e17055'],
+                        borderWidth: 2,
+                        borderColor: '#fff',
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    cutout: '55%',
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+
+            // ── Top Accounts ──
+            new Chart(document.getElementById('topClientsChart'), {
+                type: 'bar',
+                data: {
+                    labels: stats.top_accounts.map(a => a.account || 'N/A'),
+                    datasets: [{
+                        label: 'Chiamate',
+                        data: stats.top_accounts.map(a => a.count),
+                        backgroundColor: 'rgba(9,132,227,.75)',
+                        borderRadius: 4,
+                        maxBarThickness: 28,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
+                        y: { grid: { display: false } }
+                    }
+                }
+            });
+
+            // ── Top Dialed ──
+            new Chart(document.getElementById('topDialedChart'), {
+                type: 'bar',
+                data: {
+                    labels: stats.top_dialed.map(d => d.dialed_number || 'N/A'),
+                    datasets: [{
+                        label: 'Chiamate',
+                        data: stats.top_dialed.map(d => d.count),
+                        backgroundColor: 'rgba(214,48,49,.75)',
+                        borderRadius: 4,
+                        maxBarThickness: 28,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
+                        y: { grid: { display: false } }
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('Error loading stats:', error);
+        }
+    }
+
+    /* ── Search ─────────────────────────────────────── */
+    async function searchCalls() {
+        const filters = {
+            call_direction: document.getElementById('callDirection').value,
+            start_date:    document.getElementById('start-date').value,
+            end_date:       document.getElementById('end-date').value,
+            dialed_number:  document.getElementById('dialedNumber').value,
+            caller:         document.getElementById('caller').value,
+            account:        document.getElementById('account').value
+        };
+
+        currentFilters = filters;
+        currentPage = 0;
+        const limit = 50;
+
+        document.getElementById('loadingBox').style.display = 'block';
+        document.getElementById('resultsContainer').style.display = 'none';
+
+        try {
+            const params = new URLSearchParams(filters);
+            params.append('limit', limit);
+            params.append('offset', 0);
+
+            const response = await fetch(`/search?${params}`);
+            const data = await response.json();
+
+            document.getElementById('loadingBox').style.display = 'none';
+            document.getElementById('resultsContainer').style.display = 'block';
+
+            currentTotal = data.total;
+            updateResultsCount(data);
+            displayResults(data.calls);
+
+            document.getElementById('loadMoreContainer').style.display =
+                (data.offset + data.calls.length >= currentTotal) ? 'none' : 'flex';
+
+        } catch (error) {
+            document.getElementById('loadingBox').style.display = 'none';
+            document.getElementById('resultsContainer').style.display = 'block';
+            document.getElementById('resultsTableBody').innerHTML =
+                `<tr><td colspan="7"><div class="error-box">Errore nel caricamento dei dati: ${escapeHtml(error.message)}</div></td></tr>`;
+        }
+    }
+
+    function resetSearch() {
+        document.getElementById('callDirection').value = '';
+        document.getElementById('start-date').value = '';
+        document.getElementById('end-date').value = '';
+        document.getElementById('dialedNumber').value = '';
+        document.getElementById('caller').value = '';
+        document.getElementById('account').value = '';
+        searchCalls();
+    }
+
+    function displayResults(calls) {
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = calls.map(call => `
+            <tr>
+                <td>
+                    ${call.call_start ? new Date(call.call_start).toLocaleString('it-IT') : '—'}
+                    <br><span class="id-muted">${escapeHtml(call.id)}</span>
+                </td>
+                <td><span class="badge badge-${(call.call_direction||'').toLowerCase()}">${escapeHtml(call.call_direction||'—')}</span></td>
+                <td>${escapeHtml(call.caller || '—')}</td>
+                <td>${escapeHtml(call.dialed_number || '—')}</td>
+                <td>${escapeHtml(call.account || '—')}</td>
+                <td>${formatDuration(call.connected_time)}</td>
+                <td>${formatDuration(call.ring_time)}</td>
+            </tr>
+        `).join('');
+    }
+
+    function updateResultsCount(data) {
+        const shown = data.offset + data.calls.length;
+        document.getElementById('resultsCount').textContent = `${shown.toLocaleString('it-IT')} di ${currentTotal.toLocaleString('it-IT')} chiamate`;
+    }
+
+    async function loadMore() {
+        currentPage++;
+        const limit = 50;
+
+        try {
+            const params = new URLSearchParams(currentFilters);
+            params.append('limit', limit);
+            params.append('offset', currentPage * limit);
+
+            const response = await fetch(`/search?${params}`);
+            const data = await response.json();
+
+            if (data.calls.length > 0) {
+                const tbody = document.getElementById('resultsTableBody');
+                tbody.insertAdjacentHTML('beforeend', data.calls.map(call => `
+                    <tr>
+                        <td>
+                            ${call.call_start ? new Date(call.call_start).toLocaleString('it-IT') : '—'}
+                            <br><span class="id-muted">${escapeHtml(call.id)}</span>
+                        </td>
+                        <td><span class="badge badge-${(call.call_direction||'').toLowerCase()}">${escapeHtml(call.call_direction||'—')}</span></td>
+                        <td>${escapeHtml(call.caller || '—')}</td>
+                        <td>${escapeHtml(call.dialed_number || '—')}</td>
+                        <td>${escapeHtml(call.account || '—')}</td>
+                        <td>${formatDuration(call.connected_time)}</td>
+                        <td>${formatDuration(call.ring_time)}</td>
+                    </tr>
+                `).join(''));
+
+                updateResultsCount(data);
+                document.getElementById('loadMoreContainer').style.display =
+                    (currentPage * limit + data.calls.length >= currentTotal) ? 'none' : 'flex';
+            }
+        } catch (error) {
+            console.error('Error loading more:', error);
+        }
+    }
+
+    /* ── Helpers ────────────────────────────────────── */
+    function formatDuration(seconds) {
+        if (!seconds) return '—';
+        const hrs  = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.round(seconds % 60);
+        if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+        return `${mins}m ${secs}s`;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Flask Web Application
+  smdr-webapp:
+    image: smdr-webapp
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    container_name: smdr-webapp
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount data volume for SQLite database
+      - smdr-data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+  # TCP SMDR Server
+  smdr-tcpserver:
+    image: smdr-tcpserver
+    build:
+      context: .
+      dockerfile: Dockerfile.tcpserver
+    container_name: smdr-tcpserver
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount shared volume for SQLite database
+      - smdr-data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - smdr-webapp
+    restart: unless-stopped
+volumes:
+  # Named volume shared between containers
+  smdr-data:
+    driver: local

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMDR — Login</title>
+    <style>
+        :root {
+            --primary: #3b5998;
+            --primary-dark: #2d4373;
+            --surface: #ffffff;
+            --text: #1a1a2e;
+            --text-secondary: #636e72;
+            --border: #dfe6e9;
+            --danger: #d63031;
+            --shadow: 0 2px 8px rgba(0,0,0,.08);
+            --radius: 10px;
+            --radius-sm: 6px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-wrapper {
+            width: 100%;
+            max-width: 400px;
+            padding: 0 1rem;
+        }
+        .login-card {
+            background: var(--surface);
+            border-radius: var(--radius);
+            box-shadow: 0 4px 24px rgba(0,0,0,.1);
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .login-header {
+            background: var(--primary-dark);
+            padding: 1.5rem 2rem;
+            text-align: center;
+            color: #fff;
+        }
+        .login-header svg {
+            width: 40px;
+            height: 40px;
+            margin-bottom: .5rem;
+            opacity: .9;
+        }
+        .login-header h1 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: .5px;
+        }
+        .login-header p {
+            font-size: .8rem;
+            opacity: .7;
+            margin-top: .25rem;
+        }
+        .login-body {
+            padding: 2rem;
+        }
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+        .form-group label {
+            display: block;
+            font-size: .75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--text-secondary);
+            margin-bottom: .35rem;
+        }
+        .form-group input {
+            width: 100%;
+            padding: .7rem .85rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: .95rem;
+            color: var(--text);
+            background: #fafbfc;
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59,89,152,.12);
+            background: #fff;
+        }
+        .btn-login {
+            width: 100%;
+            padding: .75rem;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: .95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .15s, box-shadow .15s, transform .1s;
+            margin-top: .5rem;
+        }
+        .btn-login:hover {
+            background: var(--primary-light, #4a6fb5);
+            box-shadow: 0 2px 8px rgba(59,89,152,.3);
+        }
+        .btn-login:active { transform: scale(.98); }
+
+        .error-msg {
+            background: #fff5f5;
+            color: var(--danger);
+            padding: .7rem .85rem;
+            border-radius: var(--radius-sm);
+            border-left: 3px solid var(--danger);
+            font-size: .85rem;
+            margin-bottom: 1rem;
+            display: {% if error %}block{% else %}none{% endif %};
+        }
+        .error-msg.visible { display: block; }
+
+        footer {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: .75rem;
+            color: #b2bec3;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-wrapper">
+        <div class="login-card">
+            <div class="login-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+                <h1>SMDR Analytics</h1>
+                <p>Inserisci le credenziali per accedere</p>
+            </div>
+            <div class="login-body">
+                {% if error %}
+                <div class="error-msg visible">{{ error }}</div>
+                {% endif %}
+                <form method="POST" action="/login">
+                    <div class="form-group">
+                        <label for="username">Utente</label>
+                        <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="btn-login">Accedi</button>
+                </form>
+            </div>
+        </div>
+        <footer>SMDR Call Analytics</footer>
+    </div>
+</body>
+</html>
