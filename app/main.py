@@ -123,13 +123,28 @@ def search():
 @app.route('/statistics')
 @api_login_required
 def statistics():
-    """Statistics dashboard"""
-    filters = {
-        'call_direction': request.args.get('call_direction'),
-        'start_date': request.args.get('start_date'),
-        'end_date': request.args.get('end_date'),
-        'is_internal': request.args.get('is_internal'),
-    }
+    """Statistics dashboard with date range filters"""
+    filters = {}
+
+    call_direction = request.args.get('call_direction')
+    if call_direction:
+        filters['call_direction'] = call_direction
+
+    is_internal = request.args.get('is_internal')
+    if is_internal:
+        filters['is_internal'] = is_internal
+
+    start_date = request.args.get('start_date')
+    if start_date:
+        filters['start_date'] = start_date
+
+    end_date = request.args.get('end_date')
+    if end_date:
+        # Add time to make it end-of-day inclusive
+        if len(end_date) == 10:  # YYYY-MM-DD format
+            filters['end_date'] = end_date + ' 23:59:59'
+        else:
+            filters['end_date'] = end_date
 
     stats = get_call_stats(filters)
     return jsonify(stats)

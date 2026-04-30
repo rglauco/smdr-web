@@ -14,6 +14,7 @@
             --accent-warm: #e17055;
             --accent-blue: #0984e3;
             --accent-red: #d63031;
+            --accent-purple: #6c5ce7;
             --bg: #f0f2f5;
             --surface: #ffffff;
             --text: #1a1a2e;
@@ -81,12 +82,88 @@
             padding: 0 1.5rem;
         }
 
+        /* ── Period filter bar ──────────────────────────── */
+        .period-bar {
+            background: var(--surface);
+            padding: 1rem 1.5rem;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            margin-top: 1.5rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: .75rem;
+        }
+        .period-bar-label {
+            font-size: .8rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-right: .25rem;
+        }
+        .period-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            padding: .45rem .9rem;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--bg);
+            color: var(--text-secondary);
+            font-size: .8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .15s;
+            white-space: nowrap;
+        }
+        .period-btn:hover {
+            border-color: var(--primary-light);
+            color: var(--primary);
+            background: rgba(59,89,152,.06);
+        }
+        .period-btn.active {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(59,89,152,.25);
+        }
+        .period-btn svg { width: 14px; height: 14px; }
+
+        .period-date-range {
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            margin-left: auto;
+        }
+        .period-date-range label {
+            font-size: .72rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+        .period-date-range input[type="date"] {
+            padding: .4rem .6rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: .8rem;
+            background: #fafbfc;
+            color: var(--text);
+        }
+        .period-date-range input[type="date"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59,89,152,.12);
+        }
+
         /* ── Stats row ──────────────────────────────────── */
         .stats-row {
             display: grid;
             grid-template-columns: repeat(6, 1fr);
             gap: 1rem;
-            margin-top: 1.5rem;
+            margin-top: 1.25rem;
         }
         @media (max-width: 1100px) { .stats-row { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 600px)  { .stats-row { grid-template-columns: 1fr 1fr; } }
@@ -117,7 +194,7 @@
         .stat-icon.out    { background: rgba(225,112,85,.12); color: var(--accent-warm); }
         .stat-icon.int    { background: rgba(9,132,227,.12); color: var(--accent-blue); }
         .stat-icon.ext    { background: rgba(214,48,49,.12); color: var(--accent-red); }
-        .stat-icon.dur    { background: rgba(108,92,231,.12); color: #6c5ce7; }
+        .stat-icon.dur    { background: rgba(108,92,231,.12); color: var(--accent-purple); }
 
         .stat-label {
             font-size: .72rem;
@@ -172,6 +249,16 @@
             margin-bottom: 1rem;
             padding-bottom: .6rem;
             border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chart-title .chart-sub-label {
+            font-size: .7rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: none;
+            letter-spacing: 0;
         }
 
         /* ── Search panel ────────────────────────────────── */
@@ -403,6 +490,49 @@
 
 <div class="container">
 
+    <!-- ═══ Period filter ═══ -->
+    <div class="period-bar fade-up">
+        <span class="period-bar-label">Periodo</span>
+        <button class="period-btn active" data-period="all" onclick="setPeriod('all')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Tutto
+        </button>
+        <button class="period-btn" data-period="today" onclick="setPeriod('today')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Oggi
+        </button>
+        <button class="period-btn" data-period="7d" onclick="setPeriod('7d')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 10 12 15 7 10"/><line x1="12" y1="3" x2="12" y2="15"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+            7 giorni
+        </button>
+        <button class="period-btn" data-period="30d" onclick="setPeriod('30d')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            30 giorni
+        </button>
+        <button class="period-btn" data-period="this_month" onclick="setPeriod('this_month')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><rect x="7" y="13" width="3" height="3"/><rect x="14" y="13" width="3" height="3"/></svg>
+            Questo mese
+        </button>
+        <button class="period-btn" data-period="3m" onclick="setPeriod('3m')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><rect x="7" y="13" width="3" height="3"/><rect x="14" y="13" width="3" height="3"/></svg>
+            3 mesi
+        </button>
+        <button class="period-btn" data-period="12m" onclick="setPeriod('12m')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><rect x="7" y="13" width="3" height="3"/><rect x="14" y="13" width="3" height="3"/></svg>
+            12 mesi
+        </button>
+        <button class="period-btn" data-period="custom" id="customPeriodBtn" onclick="setPeriod('custom')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg>
+            Personalizzato
+        </button>
+        <div class="period-date-range" id="customDateRange" style="display:none">
+            <label>Da</label>
+            <input type="date" id="customStartDate" onchange="applyCustomDates()">
+            <label>A</label>
+            <input type="date" id="customEndDate" onchange="applyCustomDates()">
+        </div>
+    </div>
+
     <!-- ═══ Stats ═══ -->
     <div class="stats-row" id="statsRow">
         <div class="stat-card fade-up delay-1">
@@ -451,12 +581,15 @@
 
     <!-- ═══ Charts ═══ -->
     <div class="section">
-        <div class="section-heading">Analisi Mensile &amp; Direzione</div>
+        <div class="section-heading">Andamento &amp; Direzione</div>
     </div>
     <div class="charts-grid">
         <div class="chart-card fade-up delay-3">
-            <div class="chart-title">Chiamate per Mese</div>
-            <canvas id="callsByMonthChart"></canvas>
+            <div class="chart-title">
+                <span>Chiamate nel Periodo</span>
+                <span class="chart-sub-label" id="timeChartSubLabel">mensile</span>
+            </div>
+            <canvas id="timeChart"></canvas>
         </div>
         <div class="chart-card fade-up delay-3">
             <div class="chart-title">Chiamate per Direzione</div>
@@ -469,11 +602,17 @@
     </div>
     <div class="charts-grid" style="margin-bottom:0">
         <div class="chart-card fade-up delay-4">
-            <div class="chart-title">Top Account</div>
+            <div class="chart-title">
+                <span>Top Account</span>
+                <span class="chart-sub-label" id="topAccountsSubLabel">tutto il periodo</span>
+            </div>
             <canvas id="topClientsChart"></canvas>
         </div>
         <div class="chart-card fade-up delay-4">
-            <div class="chart-title">Top Numeri Chiamati</div>
+            <div class="chart-title">
+                <span>Top Numeri Chiamati</span>
+                <span class="chart-sub-label" id="topDialedSubLabel">tutto il periodo</span>
+            </div>
             <canvas id="topDialedChart"></canvas>
         </div>
     </div>
@@ -564,6 +703,17 @@
     let currentTotal = 0;
     let currentFilters = {};
 
+    // Period state
+    let currentPeriod = 'all';
+    let periodStartDate = null;
+    let periodEndDate = null;
+
+    // Chart instances (we destroy and recreate on period change)
+    let timeChartInstance = null;
+    let directionChartInstance = null;
+    let topClientsChartInstance = null;
+    let topDialedChartInstance = null;
+
     /* ── Chart.js global defaults ─────────────────────── */
     Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif";
     Chart.defaults.font.size = 12;
@@ -571,15 +721,136 @@
     Chart.defaults.plugins.legend.labels.usePointStyle = true;
     Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
 
+    /* ── Period helpers ─────────────────────────────────── */
+    function getDateRange(period) {
+        const now = new Date();
+        let start, end;
+
+        switch (period) {
+            case 'today':
+                start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case '7d':
+                start = new Date(now);
+                start.setDate(start.getDate() - 6); // inclusive of today = 7 days
+                start.setHours(0, 0, 0, 0);
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case '30d':
+                start = new Date(now);
+                start.setDate(start.getDate() - 29);
+                start.setHours(0, 0, 0, 0);
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case 'this_month':
+                start = new Date(now.getFullYear(), now.getMonth(), 1);
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case '3m':
+                start = new Date(now);
+                start.setMonth(start.getMonth() - 3);
+                start.setDate(start.getDate() + 1); // adjust for inclusive
+                start.setHours(0, 0, 0, 0);
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case '12m':
+                start = new Date(now);
+                start.setFullYear(start.getFullYear() - 1);
+                start.setDate(start.getDate() + 1);
+                start.setHours(0, 0, 0, 0);
+                end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                break;
+            case 'all':
+            default:
+                start = null;
+                end = null;
+                break;
+        }
+
+        return {
+            start: start ? start.toISOString().slice(0, 19) : null,
+            end: end ? end.toISOString().slice(0, 19) : null
+        };
+    }
+
+    function getPeriodLabel(period) {
+        const labels = {
+            'all': 'tutto il periodo',
+            'today': 'oggi',
+            '7d': 'ultimi 7 giorni',
+            '30d': 'ultimi 30 giorni',
+            'this_month': 'questo mese',
+            '3m': 'ultimi 3 mesi',
+            '12m': 'ultimi 12 mesi',
+            'custom': 'periodo personalizzato',
+        };
+        return labels[period] || period;
+    }
+
+    /* ── Set period ─────────────────────────────────────── */
+    function setPeriod(period) {
+        currentPeriod = period;
+
+        // Update button styles
+        document.querySelectorAll('.period-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.period === period);
+        });
+
+        // Show/hide custom date range
+        const customRange = document.getElementById('customDateRange');
+        if (period === 'custom') {
+            customRange.style.display = 'flex';
+            // Don't load yet – wait for date selection
+            return;
+        } else {
+            customRange.style.display = 'none';
+        }
+
+        if (period === 'all') {
+            periodStartDate = null;
+            periodEndDate = null;
+        } else {
+            const range = getDateRange(period);
+            periodStartDate = range.start;
+            periodEndDate = range.end;
+        }
+
+        loadAllStats();
+    }
+
+    function applyCustomDates() {
+        const startVal = document.getElementById('customStartDate').value;
+        const endVal = document.getElementById('customEndDate').value;
+        if (!startVal && !endVal) return;
+
+        periodStartDate = startVal ? startVal + ' 00:00:00' : null;
+        periodEndDate = endVal ? endVal + ' 23:59:59' : null;
+        currentPeriod = 'custom';
+
+        document.querySelectorAll('.period-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.period === 'custom');
+        });
+
+        loadAllStats();
+    }
+
     /* ── Init ─────────────────────────────────────────── */
     document.addEventListener('DOMContentLoaded', () => {
-        loadStats();
+        loadAllStats();
         searchCalls();
     });
 
-    async function loadStats() {
+    async function loadAllStats() {
         try {
-            const response = await fetch('/statistics');
+            // Build stats URL with period filters
+            let statsUrl = '/statistics';
+            const params = new URLSearchParams();
+            if (periodStartDate) params.append('start_date', periodStartDate);
+            if (periodEndDate)   params.append('end_date', periodEndDate);
+            if (params.toString()) statsUrl += '?' + params.toString();
+
+            const response = await fetch(statsUrl);
             const stats = await response.json();
 
             const fmt = n => n != null ? n.toLocaleString('it-IT') : '0';
@@ -589,16 +860,55 @@
             document.getElementById('internalCalls').textContent = fmt(stats.by_internal?.Yes || stats.by_internal?.Internal || 0);
             document.getElementById('externalCalls').textContent = fmt(stats.by_internal?.No || 0);
             document.getElementById('totalDuration').textContent = (stats.total_duration_hours || 0).toFixed(2);
-            document.getElementById('navTotal').textContent     = `${fmt(stats.total_calls)} chiamate totali`;
+            document.getElementById('navTotal').textContent     = `${fmt(stats.total_calls)} chiamate — ${getPeriodLabel(currentPeriod)}`;
 
-            // ── Monthly line ──
-            new Chart(document.getElementById('callsByMonthChart'), {
+            const periodLabel = getPeriodLabel(currentPeriod);
+
+            // ── Choose the best time grouping ──────────────
+            let chartLabels, chartData, chartType, groupingLabel;
+
+            if (currentPeriod === 'today') {
+                // By hour for today
+                // Use by_day but we only have one day; if API returns by_day we show it
+                // Actually, let's use by_day and show a single bar for today
+                chartLabels = (stats.by_day || []).map(d => d.day).reverse();
+                chartData = (stats.by_day || []).map(d => d.count).reverse();
+                groupingLabel = 'giornaliero';
+            } else if (currentPeriod === '7d') {
+                chartLabels = (stats.by_day || []).map(d => {
+                    const parts = d.day.split('-');
+                    return `${parts[2]}/${parts[1]}`;
+                }).reverse();
+                chartData = (stats.by_day || []).map(d => d.count).reverse();
+                groupingLabel = 'giornaliero';
+            } else if (currentPeriod === '30d' || currentPeriod === 'this_month') {
+                chartLabels = (stats.by_day || []).map(d => {
+                    const parts = d.day.split('-');
+                    return `${parts[2]}/${parts[1]}`;
+                }).reverse();
+                chartData = (stats.by_day || []).map(d => d.count).reverse();
+                groupingLabel = 'giornaliero';
+            } else if (currentPeriod === '3m') {
+                chartLabels = (stats.by_week || []).map(w => w.week).reverse();
+                chartData = (stats.by_week || []).map(w => w.count).reverse();
+                groupingLabel = 'settimanale';
+            } else {
+                // all / 12m / custom → monthly
+                chartLabels = (stats.by_month || []).map(m => m.month).reverse();
+                chartData = (stats.by_month || []).map(m => m.count).reverse();
+                groupingLabel = 'mensile';
+            }
+
+            // ── Time chart ──────────────────────────────────
+            if (timeChartInstance) timeChartInstance.destroy();
+            document.getElementById('timeChartSubLabel').textContent = groupingLabel;
+            timeChartInstance = new Chart(document.getElementById('timeChart'), {
                 type: 'bar',
                 data: {
-                    labels: stats.by_month.map(m => m.month),
+                    labels: chartLabels,
                     datasets: [{
                         label: 'Chiamate',
-                        data: stats.by_month.map(m => m.count),
+                        data: chartData,
                         backgroundColor: 'rgba(59,89,152,.75)',
                         borderRadius: 4,
                         borderSkipped: false,
@@ -615,8 +925,9 @@
                 }
             });
 
-            // ── Direction doughnut ──
-            new Chart(document.getElementById('callsByDirectionChart'), {
+            // ── Direction doughnut ───────────────────────────
+            if (directionChartInstance) directionChartInstance.destroy();
+            directionChartInstance = new Chart(document.getElementById('callsByDirectionChart'), {
                 type: 'doughnut',
                 data: {
                     labels: Object.keys(stats.by_direction),
@@ -634,8 +945,10 @@
                 }
             });
 
-            // ── Top Accounts ──
-            new Chart(document.getElementById('topClientsChart'), {
+            // ── Top Accounts ─────────────────────────────────
+            if (topClientsChartInstance) topClientsChartInstance.destroy();
+            document.getElementById('topAccountsSubLabel').textContent = periodLabel;
+            topClientsChartInstance = new Chart(document.getElementById('topClientsChart'), {
                 type: 'bar',
                 data: {
                     labels: stats.top_accounts.map(a => a.account || 'N/A'),
@@ -658,8 +971,10 @@
                 }
             });
 
-            // ── Top Dialed ──
-            new Chart(document.getElementById('topDialedChart'), {
+            // ── Top Dialed ───────────────────────────────────
+            if (topDialedChartInstance) topDialedChartInstance.destroy();
+            document.getElementById('topDialedSubLabel').textContent = periodLabel;
+            topDialedChartInstance = new Chart(document.getElementById('topDialedChart'), {
                 type: 'bar',
                 data: {
                     labels: stats.top_dialed.map(d => d.dialed_number || 'N/A'),

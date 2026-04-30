@@ -207,109 +207,123 @@ def get_calls(filters=None, limit=100, offset=0):
     return rows
 
 
+def _build_where_clause(filters):
+    """Build a WHERE clause and params list from a filters dict.
+
+    Supported filter keys:
+      call_direction   → exact match
+      is_internal      → exact match
+      start_date       → call_start >= (inclusive)
+      end_date         → call_start <= (inclusive, end of day)
+      dialed_number    → LIKE match
+      caller           → LIKE match
+      account          → LIKE match
+    """
+    parts = []
+    params = []
+
+    if filters:
+        if filters.get('call_direction'):
+            parts.append('call_direction = ?')
+            params.append(filters['call_direction'])
+        if filters.get('is_internal'):
+            parts.append('is_internal = ?')
+            params.append(filters['is_internal'])
+        if filters.get('start_date'):
+            parts.append('datetime(call_start) >= datetime(?)')
+            params.append(filters['start_date'])
+        if filters.get('end_date'):
+            parts.append('datetime(call_start) <= datetime(?)')
+            params.append(filters['end_date'])
+        if filters.get('dialed_number'):
+            parts.append('dialed_number LIKE ?')
+            params.append(f'%{filters["dialed_number"]}%')
+        if filters.get('caller'):
+            parts.append('caller LIKE ?')
+            params.append(f'%{filters["caller"]}%')
+        if filters.get('account'):
+            parts.append('account LIKE ?')
+            params.append(f'%{filters["account"]}%')
+
+    where = ('WHERE ' + ' AND '.join(parts)) if parts else ''
+    return where, params
+
+
 def get_call_stats(filters=None):
     """
-    Get call statistics (FIXED VERSION)
+    Get call statistics with optional date/time filters.
 
     Args:
-        filters: dict with filter criteria
+        filters: dict with filter criteria. Supports:
+            start_date, end_date, call_direction, is_internal,
+            dialed_number, caller, account
 
     Returns:
-        dict with statistics
+        dict with statistics including period-specific groupings
     """
     conn = get_db_connection()
     cursor = conn.cursor()
 
     stats = {}
+    where, params = _build_where_clause(filters)
 
-    # Build base query and parameters correctly
-    base_query_parts = []
-    params = []
-    if filters:
-        for k, v in filters.items():
-            if v and v != '':
-                base_query_parts.append(f'{k} = ?')
-                params.append(v)
+    # Helper to execute a query with or without params
+    def run(q, p=None):
+        cursor.execute(q, p if p else [])
+        return cursor.fetchall()
 
-    if base_query_parts:
-        base_query = 'WHERE ' + ' AND '.join(base_query_parts)
-    else:
-        base_query = ''
-
-    # Basic counts
-    query = f'SELECT COUNT(*) as total FROM smdr_calls {base_query}'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['total_calls'] = cursor.fetchone()['total']
+    # ── Basic counts ─────────────────────────────────────────
+    row = run(f'SELECT COUNT(*) as total FROM smdr_calls {where}', params or None)
+    stats['total_calls'] = row[0]['total']
 
     # Calls by direction
-    query = f'SELECT call_direction, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY call_direction'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['by_direction'] = {str(row['call_direction'] or 'Unknown'): row['count'] for row in cursor.fetchall()}
+    rows = run(f'SELECT call_direction, COUNT(*) as count FROM smdr_calls {where} GROUP BY call_direction', params or None)
+    stats['by_direction'] = {str(r['call_direction'] or 'Unknown'): r['count'] for r in rows}
 
     # Calls by internal status
-    query = f'SELECT is_internal, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY is_internal'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['by_internal'] = {str(row['is_internal'] or 'Unknown'): row['count'] for row in cursor.fetchall()}
+    rows = run(f'SELECT is_internal, COUNT(*) as count FROM smdr_calls {where} GROUP BY is_internal', params or None)
+    stats['by_internal'] = {str(r['is_internal'] or 'Unknown'): r['count'] for r in rows}
 
-    # Calls by account
-    query = f'SELECT account, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY account ORDER BY count DESC LIMIT 10'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['top_accounts'] = [{"account": row['account'] or 'Unknown', "count": row['count']} for row in cursor.fetchall() if row['account']]
+    # ── Top accounts (date-filtered) ──────────────────────────
+    rows = run(f'SELECT account, COUNT(*) as count FROM smdr_calls {where} GROUP BY account ORDER BY count DESC LIMIT 10', params or None)
+    stats['top_accounts'] = [{"account": r['account'] or 'Unknown', "count": r['count']} for r in rows if r['account']]
 
-    # Calls by caller
-    query = f'SELECT caller, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY caller ORDER BY count DESC LIMIT 10'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['top_callers'] = [{"caller": row['caller'] or 'Unknown', "count": row['count']} for row in cursor.fetchall() if row['caller']]
+    # ── Top callers (date-filtered) ──────────────────────────
+    rows = run(f'SELECT caller, COUNT(*) as count FROM smdr_calls {where} GROUP BY caller ORDER BY count DESC LIMIT 10', params or None)
+    stats['top_callers'] = [{"caller": r['caller'] or 'Unknown', "count": r['count']} for r in rows if r['caller']]
 
-    # Total duration (connected time)
-    query = f'SELECT SUM(connected_time) as total_duration FROM smdr_calls {base_query}'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    result = cursor.fetchone()
+    # ── Duration totals ──────────────────────────────────────
+    row = run(f'SELECT SUM(connected_time) as total_duration FROM smdr_calls {where}', params or None)
+    result = row[0]
     stats['total_connected_seconds'] = result['total_duration'] or 0
     stats['total_duration_hours'] = round(result['total_duration'] / 3600 if result['total_duration'] else 0, 2)
 
-    # Total ring time
-    query = f'SELECT SUM(ring_time) as total_ring FROM smdr_calls {base_query}'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    result = cursor.fetchone()
+    row = run(f'SELECT SUM(ring_time) as total_ring FROM smdr_calls {where}', params or None)
+    result = row[0]
     stats['total_ring_minutes'] = round(result['total_ring'] / 60 if result['total_ring'] else 0, 2)
 
-    # Calls by month
-    query = f'SELECT strftime("%Y-%m", call_start) as month, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY month ORDER BY month DESC LIMIT 12'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['by_month'] = [{"month": row['month'] or 'Unknown', "count": row['count']} for row in cursor.fetchall() if row['month']]
+    # ── Top dialed numbers (date-filtered) ───────────────────
+    rows = run(f'SELECT dialed_number, COUNT(*) as count FROM smdr_calls {where} GROUP BY dialed_number ORDER BY count DESC LIMIT 10', params or None)
+    stats['top_dialed'] = [{"dialed_number": r['dialed_number'] or 'Unknown', "count": r['count']} for r in rows if r['dialed_number']]
 
-    # Top dialed numbers
-    query = f'SELECT dialed_number, COUNT(*) as count FROM smdr_calls {base_query} GROUP BY dialed_number ORDER BY count DESC LIMIT 10'
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query, [])
-    stats['top_dialed'] = [{"dialed_number": row['dialed_number'] or 'Unknown', "count": row['count']} for row in cursor.fetchall() if row['dialed_number']]
+    # ── Period grouping: by_day, by_week, by_month ───────────
+    # By day (last 60 days max)
+    rows = run(f"""SELECT strftime('%Y-%m-%d', call_start) as day, COUNT(*) as count
+                   FROM smdr_calls {where}
+                   GROUP BY day ORDER BY day DESC LIMIT 60""", params or None)
+    stats['by_day'] = [{"day": r['day'], "count": r['count']} for r in rows if r['day']]
+
+    # By week (ISO week)
+    rows = run(f"""SELECT strftime('%Y-W%W', call_start) as week, COUNT(*) as count
+                   FROM smdr_calls {where}
+                   GROUP BY week ORDER BY week DESC LIMIT 24""", params or None)
+    stats['by_week'] = [{"week": r['week'], "count": r['count']} for r in rows if r['week']]
+
+    # By month (last 24 months)
+    rows = run(f"""SELECT strftime('%Y-%m', call_start) as month, COUNT(*) as count
+                   FROM smdr_calls {where}
+                   GROUP BY month ORDER BY month DESC LIMIT 24""", params or None)
+    stats['by_month'] = [{"month": r['month'], "count": r['count']} for r in rows if r['month']]
 
     conn.close()
     return stats
