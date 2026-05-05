@@ -12,7 +12,8 @@ from database import (
     get_call_by_id,
     count_calls,
     update_smdr_record,
-    get_calls_by_date_period
+    get_calls_by_date_period,
+    get_hourly_stats
 )
 
 # Load environment variables from .env
@@ -158,6 +159,17 @@ def get_call(call_id):
     if call:
         return jsonify(dict(call))
     return jsonify({'error': 'Call not found'}), 404
+
+
+@app.route('/api/stats/hourly')
+@api_login_required
+def get_hourly_stats_route():
+    """Get hourly call distribution for a given date range"""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    stats = get_hourly_stats(start_date=start_date, end_date=end_date)
+    return jsonify(stats)
 
 
 @app.route('/api/months')

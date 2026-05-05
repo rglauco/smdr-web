@@ -356,6 +356,51 @@ def get_calls_by_date_period(year=None, month=None, day=None):
     return rows
 
 
+def get_hourly_stats(start_date=None, end_date=None):
+    """
+    Get hourly call distribution for a given date range.
+
+    Args:
+        start_date: optional start date string (YYYY-MM-DD HH:MM:SS)
+        end_date: optional end date string (YYYY-MM-DD HH:MM:SS)
+
+    Returns:
+        dict with 'hours' key containing list of {hour, count} for hours 0-23
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = '''
+        SELECT strftime("%H", call_start) as hour,
+               COUNT(*) as count
+        FROM smdr_calls
+        WHERE 1=1
+    '''
+    params = []
+
+    if start_date:
+        query += ' AND datetime(call_start) >= datetime(?)'
+        params.append(start_date)
+    if end_date:
+        query += ' AND datetime(call_start) <= datetime(?)'
+        params.append(end_date)
+
+    query += ' GROUP BY hour ORDER BY hour ASC'
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    # Build full 0-23 hour array
+    hourly_data = {str(h).zfill(2): 0 for h in range(24)}
+    for row in rows:
+        hourly_data[row['hour']] = row['count']
+
+    return {
+        'hours': [{'hour': h, 'count': hourly_data[h]} for h in sorted(hourly_data.keys())]
+    }
+
+
 def get_call_by_id(call_id):
     """Get a single call by ID"""
     conn = get_db_connection()

@@ -598,6 +598,26 @@
     </div>
 
     <div style="margin-top:1.25rem">
+        <div class="section-heading">Distribuzione Oraria</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Chiamate per Ora del Giorno</span>
+                <span class="chart-sub-label" id="hourlyDistSubLabel">tutto il periodo</span>
+            </div>
+            <canvas id="hourlyDistChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Andamento Giornaliero</span>
+                <span class="chart-sub-label" id="dailyTrendSubLabel">numero chiamate per giorno</span>
+            </div>
+            <canvas id="dailyTrendChart"></canvas>
+        </div>
+    </div>
+
+    <div style="margin-top:1.25rem">
         <div class="section-heading">Top Clienti &amp; Numeri Chiamati</div>
     </div>
     <div class="charts-grid" style="margin-bottom:0">
@@ -713,6 +733,8 @@
     let directionChartInstance = null;
     let topClientsChartInstance = null;
     let topDialedChartInstance = null;
+    let hourlyDistChartInstance = null;
+    let dailyTrendChartInstance = null;
 
     /* ── Chart.js global defaults ─────────────────────── */
     Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif";
@@ -993,6 +1015,133 @@
                     scales: {
                         x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
                         y: { grid: { display: false } }
+                    }
+                }
+            });
+
+            // ── Hourly Distribution Chart ───────────────────
+            // Load hourly distribution from the dedicated API
+            try {
+                let hourlyUrl = '/api/stats/hourly';
+                const hourlyParams = new URLSearchParams();
+                if (periodStartDate) hourlyParams.append('start_date', periodStartDate);
+                if (periodEndDate) hourlyParams.append('end_date', periodEndDate);
+                const hp = hourlyParams.toString();
+                if (hp) hourlyUrl += '?' + hp;
+
+                const hourlyResp = await fetch(hourlyUrl);
+                const hourlyData = await hourlyResp.json();
+
+                const hourLabels = hourlyData.hours.map(h => h.hour + ':00');
+                const hourCounts = hourlyData.hours.map(h => h.count);
+
+                document.getElementById('hourlyDistSubLabel').textContent = periodLabel;
+
+                if (hourlyDistChartInstance) hourlyDistChartInstance.destroy();
+                hourlyDistChartInstance = new Chart(document.getElementById('hourlyDistChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: hourLabels,
+                        datasets: [{
+                            label: 'Chiamate',
+                            data: hourCounts,
+                            backgroundColor: hourCounts.map((v, i) => {
+                                // Gradient-like colors: morning cool, afternoon warm
+                                if (i >= 6 && i < 12) return 'rgba(0,184,148,.75)';
+                                if (i >= 12 && i < 18) return 'rgba(59,89,152,.75)';
+                                if (i >= 18 && i < 22) return 'rgba(225,112,85,.75)';
+                                return 'rgba(178,190,195,.6)';
+                            }),
+                            borderRadius: 4,
+                            borderSkipped: false,
+                            maxBarThickness: 24,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    title: items => 'Ora ' + items[0].label
+                                }
+                            }
+                        },
+                        scales: {
+                            y: { beginAtZero: true, grid: { color: '#f0f2f5' }, title: { display: true, text: 'Chiamate' } },
+                            x: {
+                                grid: { display: false },
+                                ticks: {
+                                    maxRotation: 45,
+                                    callback: function(val, idx) {
+                                        // Show every 2nd label to avoid crowding
+                                        return idx % 2 === 0 ? this.getLabelForValue(val) : '';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error('Error loading hourly stats:', e);
+            }
+
+            // ── Daily Trend Chart (by_day bar) ──────────────
+            // This complements the timeChart; shows single-day detail when period is short
+            let dailyTrendLabels = [];
+            let dailyTrendData = [];
+            let dailyTrendLabel = '';
+            const byDay = stats.by_day || [];
+
+            if (byDay.length > 0) {
+                // Reverse to chronological order
+                const sorted = [...byDay].reverse();
+                dailyTrendLabels = sorted.map(d => {
+                    const parts = d.day.split('-');
+                    return parts.length === 3 ? parts[2] + '/' + parts[1] : d.day;
+                });
+                dailyTrendData = sorted.map(d => d.count);
+                dailyTrendLabel = 'Chiamate per giorno';
+            }
+
+            if (dailyTrendChartInstance) dailyTrendChartInstance.destroy();
+            document.getElementById('dailyTrendSubLabel').textContent =
+                dailyTrendLabels.length > 0 ? `${dailyTrendLabels.length} giorni` : 'nessun dato';
+            dailyTrendChartInstance = new Chart(document.getElementById('dailyTrendChart'), {
+                type: 'line',
+                data: {
+                    labels: dailyTrendLabels,
+                    datasets: [{
+                        label: 'Chiamate',
+                        data: dailyTrendData,
+                        borderColor: 'rgba(59,89,152,.85)',
+                        backgroundColor: 'rgba(59,89,152,.12)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        borderWidth: 2,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: items => 'Giorno ' + items[0].label
+                            }
+                        }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f0f2f5' }, title: { display: true, text: 'Chiamate' } },
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                maxRotation: 45,
+                                maxTicksLimit: 15
+                            }
+                        }
                     }
                 }
             });
