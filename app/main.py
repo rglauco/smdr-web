@@ -26,7 +26,7 @@ from database import (
 )
 
 # Load environment variables from .env
-load_dotenv()
+load_dotenv(override=True)
 
 
 def _require_env(name):
