@@ -29,10 +29,15 @@ def init_database():
         )
     ''')
 
-    # Insert default timezone if not exists
+    # Insert default settings if not exists
     cursor.execute('''
         INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)
     ''', ('timezone', 'Europe/Rome'))
+    # timestamp_mode: 'utc' means stored timestamps are UTC,
+    #                 'local' means stored timestamps are in the configured timezone
+    cursor.execute('''
+        INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)
+    ''', ('timestamp_mode', 'utc'))
 
     # Create smdr_calls table
     cursor.execute('''
@@ -475,54 +480,70 @@ def get_app_timezone():
         return ZoneInfo('Europe/Rome')
 
 
-def localize_timestamp(dt_str, tz=None):
+def get_timestamp_mode():
     """
-    Convert a naive timestamp string to the configured timezone.
-    
-    Assumes the stored timestamp is a naive datetime in the configured timezone.
-    Returns the timestamp with UTC offset appended (ISO 8601 format).
-    This allows the frontend to correctly interpret and display the time.
-    
-    DST is handled automatically via the ZoneInfo database.
+    Get how timestamps are stored in the database.
+    'utc'     → timestamps are in UTC (e.g. from a PBX sending UTC)
+    'local'   → timestamps are in the configured timezone (e.g. from a PBX sending local time)
+    """
+    return get_setting('timestamp_mode', 'utc')
+
+
+def localize_timestamp(dt_str, tz=None, mode=None):
+    """
+    Convert a stored timestamp string to an ISO 8601 string with UTC offset,
+    so the frontend can correctly display it in the configured timezone.
+
+    The conversion depends on 'timestamp_mode':
+      - 'utc':   stored timestamps are in UTC → attach +00:00, then convert to tz
+      - 'local': stored timestamps are already in tz → just attach the offset
+
+    DST is handled automatically via the zoneinfo database.
+
+    Examples (with timezone Europe/Rome, summer = CEST +02:00):
+      mode='utc',   input='2025-07-15T10:35:19'  → '2025-07-15T12:35:19+02:00'
+      mode='local', input='2025-07-15T12:35:19'  → '2025-07-15T12:35:19+02:00'
     """
     if not dt_str:
         return dt_str
-    
+
     if tz is None:
         tz = get_app_timezone()
-    
-    # Parse the stored timestamp
-    # Handle both '2024-05-07T14:30:00' and '2024-05-07 14:30:00' formats
+    if mode is None:
+        mode = get_timestamp_mode()
+
     ts = dt_str.strip()
-    
-    # If already timezone-aware (ends with +XX:XX or Z), return as-is
+
+    # Already timezone-aware → return as-is
     if ts.endswith('Z') or (len(ts) > 5 and ts[-6] in ('+', '-') and ts[-3] == ':'):
         return ts
-    
+
     try:
-        if 'T' in ts:
-            dt_naive = datetime.fromisoformat(ts)
+        dt_naive = _parse_timestamp(ts)
+
+        if mode == 'utc':
+            # Stored as UTC → mark as UTC, then convert to configured timezone
+            dt_utc = dt_naive.replace(tzinfo=timezone.utc)
+            dt_local = dt_utc.astimezone(tz)
         else:
-            # Try common formats
-            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M:%S'):
-                try:
-                    dt_naive = datetime.strptime(ts, fmt)
-                    break
-                except ValueError:
-                    continue
-            else:
-                # Last resort
-                dt_naive = datetime.fromisoformat(ts)
-        
-        # Localize the naive datetime to the configured timezone
-        # This automatically handles DST!
-        dt_aware = dt_naive.replace(tzinfo=tz)
-        
-        # Return as ISO 8601 with UTC offset
-        return dt_aware.isoformat()
+            # Stored as local time → treat as in the configured timezone
+            dt_local = dt_naive.replace(tzinfo=tz)
+
+        return dt_local.isoformat()
     except Exception:
-        # If parsing fails, return original string
         return dt_str
+
+
+def _parse_timestamp(ts):
+    """Parse a timestamp string into a naive datetime object."""
+    if 'T' in ts:
+        return datetime.fromisoformat(ts)
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M:%S'):
+        try:
+            return datetime.strptime(ts, fmt)
+        except ValueError:
+            continue
+    return datetime.fromisoformat(ts)
 
 
 def get_tz_info():
@@ -532,25 +553,21 @@ def get_tz_info():
     """
     tz = get_app_timezone()
     tz_name = get_setting('timezone', 'Europe/Rome')
+    mode = get_timestamp_mode()
     now = datetime.now(tz)
-    
-    # Get UTC offset
-    utc_offset = now.strftime('%z')  # e.g. '+0200'
-    # Format as '+02:00'
-    offset_hours = utc_offset[:-2]
-    offset_minutes = utc_offset[-2:]
-    offset_formatted = f'{offset_hours[:3]}:{offset_minutes}'
-    if len(offset_hours) == 3:  # +02 => +02:00
-        offset_formatted = f'+0{offset_hours[1:]}:{offset_minutes}'
-    formatted_offset = f'{utc_offset[:3]}:{utc_offset[3:]}'
-    
+
+    # Format UTC offset as '+02:00' or '-05:00' etc.
+    formatted_offset = now.strftime('%z')  # e.g. '+0200' or '-0500'
+    formatted_offset = f'{formatted_offset[:3]}:{formatted_offset[3:]}'
+
     # Check if DST is active
     dst_active = bool(now.dst())
-    
+
     return {
         'timezone': tz_name,
         'utc_offset': formatted_offset,
         'utc_offset_minutes': int(now.utcoffset().total_seconds() / 60),
         'dst_active': dst_active,
         'current_time': now.isoformat(),
+        'timestamp_mode': mode,
     }

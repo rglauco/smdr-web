@@ -870,6 +870,15 @@
                 <option value="Pacific/Auckland">Nuova Zelanda (Pacific/Auckland)</option>
                 <option value="UTC">UTC (Senza fuso orario)</option>
             </select>
+            <label for="timestampModeSelect" style="margin-top:1rem">Formato orari nel database</label>
+            <select id="timestampModeSelect">
+                <option value="utc">UTC — I timestamp nel DB sono in ora UTC</option>
+                <option value="local">Ora locale — I timestamp nel DB sono già in ora locale</option>
+            </select>
+            <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem;line-height:1.4">
+                Se i log del centralino sono indietro di 2 ore, seleziona <strong>UTC</strong>.<br>
+                Se l'orario è già corretto, seleziona <strong>Ora locale</strong>.
+            </p>
             <div class="tz-preview">
                 <div class="tz-preview-row">
                     <span>Fuso orario</span>
@@ -913,7 +922,7 @@
     let periodEndDate = null;
 
     // Timezone state
-    let appTZ = { timezone: 'Europe/Rome', utc_offset: '+01:00', utc_offset_minutes: 60, dst_active: false };
+    let appTZ = { timezone: 'Europe/Rome', utc_offset: '+01:00', utc_offset_minutes: 60, dst_active: false, timestamp_mode: 'utc' };
 
     // Chart instances (we destroy and recreate on period change)
     let timeChartInstance = null;
@@ -1495,17 +1504,20 @@
     function updateTzBadge() {
         const badge = document.getElementById('tzBadgeText');
         if (!badge) return;
-        const label = appTZ.timezone.replace('_', ' ');
+        const label = appTZ.timezone.replace(/_/g, ' ');
         const dstTag = appTZ.dst_active
             ? '<span class="dst-indicator dst-active">Ora legale</span>'
             : '<span class="dst-indicator dst-inactive">Ora solare</span>';
-        badge.innerHTML = `${label} ${appTZ.utc_offset} ${dstTag}`;
+        const modeLabel = appTZ.timestamp_mode === 'utc' ? 'UTC' : 'Locale';
+        badge.innerHTML = `${label} ${appTZ.utc_offset} · ${modeLabel} ${dstTag}`;
     }
 
     function openTzModal() {
         const modal = document.getElementById('tzModal');
         const select = document.getElementById('tzSelect');
+        const modeSelect = document.getElementById('timestampModeSelect');
         select.value = appTZ.timezone;
+        modeSelect.value = appTZ.timestamp_mode;
         modal.classList.add('active');
         updateTzPreview();
     }
@@ -1516,7 +1528,9 @@
 
     function updateTzPreview() {
         const select = document.getElementById('tzSelect');
+        const modeSelect = document.getElementById('timestampModeSelect');
         const tz = select.value;
+        const mode = modeSelect.value;
         try {
             const now = new Date();
             const formatter = new Intl.DateTimeFormat('it-IT', {
@@ -1542,28 +1556,21 @@
             const offsetStr = offsetParts.find(p => p.type === 'timeZoneName')?.value || '';
 
             // Check DST
-            const stdOffset = new Date(new Date().getFullYear(), 0, 1);
-            const dstOffset = now;
-            let isDst = false;
-            // Simple heuristic: check if the timezone observes DST
             const jan = new Date(now.getFullYear(), 0, 1);
             const jul = new Date(now.getFullYear(), 6, 1);
             const janOff = new Date(jan).toLocaleString('en-US', { timeZone: tz, timeZoneName: 'shortOffset' });
             const julOff = new Date(jul).toLocaleString('en-US', { timeZone: tz, timeZoneName: 'shortOffset' });
-            isDst = janOff !== julOff;
+            const isDst = janOff !== julOff;
 
             document.getElementById('tzPreviewName').textContent = tzName || tz;
             document.getElementById('tzPreviewOffset').textContent = offsetStr || appTZ.utc_offset;
-            document.getElementById('tzPreviewDst').innerHTML = appTZ.dst_active
-                ? '<span style="color:#00b894">Attiva (CEST / Ora legale)</span>'
-                : '<span style="color:#636e72">Non attiva (CET / Ora solare)</span>';
-            // Only override for preview based on selected TZ
             const currentMonth = now.getMonth(); // 0-11
             if (isDst) {
-                const isCurrentlyDst = Math.abs(new Date(now).getTimezoneOffset()) > Math.abs(new Date(jan).getTimezoneOffset());
                 document.getElementById('tzPreviewDst').innerHTML = currentMonth >= 3 && currentMonth <= 9
                     ? '<span style="color:#00b894">Attiva (ora legale)</span>'
                     : '<span style="color:#636e72">Non attiva (ora solare)</span>';
+            } else {
+                document.getElementById('tzPreviewDst').innerHTML = '<span style="color:#636e72">Non applicabile</span>';
             }
             document.getElementById('tzPreviewTime').textContent = localTime;
         } catch (e) {
@@ -1576,18 +1583,20 @@
 
     async function saveTimezone() {
         const select = document.getElementById('tzSelect');
+        const modeSelect = document.getElementById('timestampModeSelect');
         const tz = select.value;
+        const mode = modeSelect.value;
 
         try {
             const resp = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ timezone: tz })
+                body: JSON.stringify({ timezone: tz, timestamp_mode: mode })
             });
 
             if (!resp.ok) {
                 const err = await resp.json();
-                alert('Errore: ' + (err.error || 'Impossibile salvare il fuso orario'));
+                alert('Errore: ' + (err.error || 'Impossibile salvare le impostazioni'));
                 return;
             }
 
@@ -1595,7 +1604,7 @@
             updateTzBadge();
             closeTzModal();
 
-            // Reload all stats with the new timezone
+            // Reload all stats with the new timezone/mode
             loadAllStats();
             searchCalls();
         } catch (e) {
@@ -1610,6 +1619,7 @@
 
     // Update timezone preview on select change
     document.getElementById('tzSelect').addEventListener('change', updateTzPreview);
+    document.getElementById('timestampModeSelect').addEventListener('change', updateTzPreview);
 
     // Close modal on Escape
     document.addEventListener('keydown', function(e) {

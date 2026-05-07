@@ -20,6 +20,7 @@ from database import (
     get_app_timezone,
     localize_timestamp,
     get_tz_info,
+    get_timestamp_mode,
 )
 
 # Load environment variables from .env
@@ -42,7 +43,10 @@ init_database()
 def _localize_call(call_dict):
     """Localize the call_start timestamp in a call dict to the configured timezone."""
     if call_dict.get('call_start'):
-        call_dict['call_start'] = localize_timestamp(call_dict['call_start'])
+        call_dict['call_start'] = localize_timestamp(
+            call_dict['call_start'],
+            mode=get_timestamp_mode()
+        )
     return call_dict
 
 
@@ -138,6 +142,13 @@ def update_settings():
             set_setting('timezone', tz_name)
         except Exception:
             return jsonify({'error': f'Invalid timezone: {tz_name}'}), 400
+
+    # Validate and update timestamp_mode
+    if 'timestamp_mode' in data:
+        mode = data['timestamp_mode']
+        if mode not in ('utc', 'local'):
+            return jsonify({'error': f'Invalid timestamp_mode: {mode}. Must be "utc" or "local".'}), 400
+        set_setting('timestamp_mode', mode)
 
     return jsonify(get_tz_info())
 
