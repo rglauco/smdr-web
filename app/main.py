@@ -1,6 +1,8 @@
 """Flask application for SMDR web interface"""
+import hmac
 import os
-from datetime import datetime
+import sys
+from datetime import datetime, timedelta
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -26,13 +28,40 @@ from database import (
 # Load environment variables from .env
 load_dotenv()
 
+
+def _require_env(name):
+    """Read a required env var or fail fast with a helpful message."""
+    value = os.environ.get(name)
+    if not value:
+        sys.stderr.write(
+            f"\nERRORE: variabile d'ambiente '{name}' non impostata.\n"
+            f"Crea un file .env nella root del progetto con:\n"
+            f"  SMDR_USERNAME=<utente>\n"
+            f"  SMDR_PASSWORD=<password forte>\n"
+            f"  SMDR_SECRET_KEY=<stringa casuale lunga>\n"
+            f"Per generare una secret key:\n"
+            f"  python -c 'import secrets; print(secrets.token_hex(32))'\n\n"
+        )
+        sys.exit(1)
+    return value
+
+
+SMDR_USERNAME = _require_env('SMDR_USERNAME')
+SMDR_PASSWORD = _require_env('SMDR_PASSWORD')
+_SECRET_KEY = _require_env('SMDR_SECRET_KEY')
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SMDR_SECRET_KEY', os.urandom(32).hex())
+app.config['SECRET_KEY'] = _SECRET_KEY
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'data')
 
-# Credentials from .env
-SMDR_USERNAME = os.environ.get('SMDR_USERNAME', 'admin')
-SMDR_PASSWORD = os.environ.get('SMDR_PASSWORD', 'smdr2024')
+# Session cookie hardening. SECURE defaults to True; set SMDR_COOKIE_SECURE=false
+# in dev when serving over plain HTTP on localhost.
+app.config.update(
+    SESSION_COOKIE_SECURE=os.environ.get('SMDR_COOKIE_SECURE', 'true').lower() == 'true',
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
 
 # Initialize database on startup
 init_database()
@@ -89,7 +118,13 @@ def login():
         username = request.form.get('username', '')
         password = request.form.get('password', '')
 
-        if username == SMDR_USERNAME and password == SMDR_PASSWORD:
+        # Constant-time comparison to avoid leaking timing information.
+        # Both branches must run regardless of which one fails.
+        username_ok = hmac.compare_digest(username, SMDR_USERNAME)
+        password_ok = hmac.compare_digest(password, SMDR_PASSWORD)
+
+        if username_ok and password_ok:
+            session.permanent = True
             session['logged_in'] = True
             session['username'] = username
             return redirect(url_for('index'))
@@ -169,8 +204,16 @@ def search():
         'is_internal': request.args.get('is_internal'),
     }
 
-    limit = int(request.args.get('limit', 100))
-    offset = int(request.args.get('offset', 0))
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (TypeError, ValueError):
+        offset = 0
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
 
     calls = get_calls(filters, limit, offset)
     total_count = count_calls()
