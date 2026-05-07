@@ -771,6 +771,16 @@
         </div>
     </div>
 
+    <!-- ═══ Flow type filter (Esterno/Interno) ═══ -->
+    <div class="period-bar fade-up" style="margin-top:.75rem">
+        <span class="period-bar-label">Flusso</span>
+        <button class="period-btn active" data-flow="" onclick="setFlow('')">Tutti</button>
+        <button class="period-btn" data-flow="EI" onclick="setFlow('EI')" title="Cittadini che chiamano l'amministrazione">Esterno → Interno</button>
+        <button class="period-btn" data-flow="IE" onclick="setFlow('IE')" title="Estensioni che chiamano numeri esterni">Interno → Esterno</button>
+        <button class="period-btn" data-flow="II" onclick="setFlow('II')" title="Comunicazione tra estensioni del Comune">Interno → Interno</button>
+        <button class="period-btn" data-flow="EE" onclick="setFlow('EE')" title="Esterno verso esterno (rari, spesso forwarding)">Esterno → Esterno</button>
+    </div>
+
     <!-- ═══ Stats ═══ -->
     <div class="stats-row" id="statsRow">
         <div class="stat-card fade-up delay-1">
@@ -931,6 +941,75 @@
             </div>
             <canvas id="dowChart"></canvas>
         </div>
+    </div>
+
+    <!-- ═══ Flussi (E/I) & carico interni ═══ -->
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Flussi di Chiamata</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Distribuzione Flussi</span>
+                <span class="chart-sub-label">click per filtrare tutta la dashboard</span>
+            </div>
+            <canvas id="flowChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>KPI per tipo di flusso</span>
+                <span class="chart-sub-label">durata media, tasso risposta</span>
+            </div>
+            <div id="flowKpiTable" style="font-size:.85rem"></div>
+        </div>
+    </div>
+
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Carico Estensioni</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Top Estensioni — Chiamate ricevute (E→I)</span>
+                <span class="chart-sub-label">cittadini → amministrazione</span>
+            </div>
+            <canvas id="extLoadInboundChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Top Estensioni — Chiamate uscenti (I→E)</span>
+                <span class="chart-sub-label">amministrazione → cittadini/fornitori</span>
+            </div>
+            <canvas id="extLoadOutboundChart"></canvas>
+        </div>
+    </div>
+    <div class="charts-grid" style="margin-top:1rem">
+        <div class="chart-card fade-up delay-4" style="grid-column: span 2">
+            <div class="chart-title">
+                <span>Top Estensioni — Comunicazioni interne (I→I)</span>
+                <span class="chart-sub-label">somma di chiamate inviate e ricevute tra estensioni</span>
+            </div>
+            <canvas id="extLoadInternalChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ═══ Trasferimenti rilevati ═══ -->
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Trasferimenti Rilevati (euristica)</div>
+    </div>
+    <div class="chart-card fade-up delay-4">
+        <div class="chart-title">
+            <span id="transferSummary">—</span>
+            <span class="chart-sub-label">
+                Lag massimo (s):
+                <input type="number" id="transferLag" value="60" min="5" max="600" step="5" style="width:60px;padding:.2rem .35rem;border:1px solid var(--border);border-radius:4px;font-size:.75rem" onchange="loadTransfers()">
+            </span>
+        </div>
+        <p style="color:var(--text-muted);font-size:.78rem;margin-bottom:.6rem">
+            Il PBX non emette un ID univoco di chiamata, quindi i trasferimenti vengono inferiti per prossimità temporale:
+            chiamata esterna → estensione A che ha risposto, e poco dopo A chiama internamente B.
+        </p>
+        <div id="transferList" style="max-height:420px;overflow:auto"></div>
     </div>
 
     <div style="margin-top:1.25rem">
@@ -1146,6 +1225,13 @@
     let numCatCallerChartInstance = null;
     let durationHistogramChartInstance = null;
     let dowChartInstance = null;
+    let flowChartInstance = null;
+    let extLoadInboundChartInstance = null;
+    let extLoadOutboundChartInstance = null;
+    let extLoadInternalChartInstance = null;
+
+    // Global flow filter ('' = all, 'EI' | 'IE' | 'II' | 'EE')
+    let currentFlow = '';
 
     // Last grouping used for the time chart, for drill-down click handling
     let timeChartGrouping = 'mensile';
@@ -1611,6 +1697,9 @@
             loadDow(),
             loadAnomalies(),
             loadComparison(),
+            loadFlows(),
+            loadExtensionLoad(),
+            loadTransfers(),
         ]);
     }
 
@@ -1619,7 +1708,18 @@
         const p = new URLSearchParams();
         if (periodStartDate) p.append('start_date', periodStartDate);
         if (periodEndDate)   p.append('end_date', periodEndDate);
+        if (currentFlow)     p.append('flow_type', currentFlow);
         return p;
+    }
+
+    /* ── Flow filter ─────────────────────────────────── */
+    function setFlow(flow) {
+        currentFlow = flow || '';
+        document.querySelectorAll('[data-flow]').forEach(btn => {
+            btn.classList.toggle('active', (btn.dataset.flow || '') === currentFlow);
+        });
+        loadAllStats();
+        searchCalls();
     }
 
     /* ── Card value setter (preserves the inline delta span) ── */
@@ -1918,6 +2018,192 @@
         el.style.display = 'inline-flex';
     }
 
+    /* ── Flow distribution ──────────────────────────── */
+    const FLOW_COLORS = {
+        'EI': '#0984e3',  // Esterno → Interno
+        'IE': '#e17055',  // Interno → Esterno
+        'II': '#6c5ce7',  // Interno → Interno
+        'EE': '#d63031',  // Esterno → Esterno
+        'unknown': '#b2bec3',
+    };
+
+    async function loadFlows() {
+        try {
+            // The flows endpoint ignores its own flow_type filter so the chart always shows all 4 buckets
+            const url = '/api/stats/flows?' + periodParams().toString();
+            const data = await (await fetch(url)).json();
+            const flows = (data.flows || []).filter(f => f.code !== 'unknown' || f.count > 0);
+            const labels = flows.map(f => f.label);
+            const counts = flows.map(f => f.count);
+            const colors = flows.map(f => FLOW_COLORS[f.code] || '#b2bec3');
+
+            if (flowChartInstance) flowChartInstance.destroy();
+            flowChartInstance = new Chart(document.getElementById('flowChart'), {
+                type: 'doughnut',
+                data: { labels, datasets: [{ data: counts, backgroundColor: colors, borderWidth: 2, borderColor: '#fff' }] },
+                options: {
+                    responsive: true,
+                    cutout: '55%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 8 } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const f = flows[ctx.dataIndex];
+                                    const total = counts.reduce((a, b) => a + b, 0) || 1;
+                                    const pct = (ctx.parsed / total * 100).toFixed(1);
+                                    const acd = f.answered ? Math.round(f.total_seconds / f.answered) : 0;
+                                    return [` ${f.label}: ${f.count.toLocaleString('it-IT')} (${pct}%)`,
+                                            ` Risposte: ${f.answered} · Durata media: ${acd}s`];
+                                }
+                            }
+                        }
+                    },
+                    onClick: (evt, elements) => {
+                        if (!elements || !elements.length) return;
+                        const code = flows[elements[0].index].code;
+                        if (code !== 'unknown') setFlow(code);
+                    },
+                }
+            });
+
+            // KPI table next to the chart
+            const total = counts.reduce((a, b) => a + b, 0) || 1;
+            const html = ['<table style="width:100%;border-collapse:collapse"><thead><tr>',
+                '<th style="text-align:left;padding:.4rem .5rem;font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Flusso</th>',
+                '<th style="text-align:right;padding:.4rem .5rem;font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Chiamate</th>',
+                '<th style="text-align:right;padding:.4rem .5rem;font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">% risposte</th>',
+                '<th style="text-align:right;padding:.4rem .5rem;font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Durata media</th>',
+                '</tr></thead><tbody>'];
+            for (const f of flows) {
+                const pct = (f.count / total * 100).toFixed(1);
+                const ar = f.count ? (f.answered / f.count * 100).toFixed(1) : '0.0';
+                const acd = f.answered ? Math.round(f.total_seconds / f.answered) : 0;
+                const acdStr = acd >= 60 ? `${Math.floor(acd/60)}m ${acd%60}s` : `${acd}s`;
+                html.push(`<tr style="cursor:pointer" onclick="setFlow('${f.code}')">`,
+                    `<td style="padding:.5rem;border-bottom:1px solid var(--border)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${FLOW_COLORS[f.code]};margin-right:.4rem;vertical-align:middle"></span>${escapeHtml(f.label)}</td>`,
+                    `<td style="padding:.5rem;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${f.count.toLocaleString('it-IT')} <small style="color:var(--text-muted)">(${pct}%)</small></td>`,
+                    `<td style="padding:.5rem;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${ar}%</td>`,
+                    `<td style="padding:.5rem;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${acdStr}</td>`,
+                    '</tr>');
+            }
+            html.push('</tbody></table>');
+            document.getElementById('flowKpiTable').innerHTML = html.join('');
+        } catch (e) {
+            console.error('flows error:', e);
+        }
+    }
+
+    /* ── Extension load (Inbound / Outbound / Internal) ── */
+    async function loadExtensionLoad() {
+        const baseParams = periodParams();
+        // The extension-load endpoint forces its own flow_type per role,
+        // but propagating the global flow filter would zero out unrelated panels.
+        baseParams.delete('flow_type');
+
+        try {
+            const [inb, outb, intl] = await Promise.all([
+                fetch('/api/stats/extension-load?role=inbound&limit=12&'  + baseParams.toString()).then(r => r.json()),
+                fetch('/api/stats/extension-load?role=outbound&limit=12&' + baseParams.toString()).then(r => r.json()),
+                fetch('/api/stats/extension-load?role=internal&limit=15&' + baseParams.toString()).then(r => r.json()),
+            ]);
+            renderExtLoadChart('extLoadInboundChart', 'extLoadInboundChartInstance', inb.extensions || [], 'rgba(9,132,227,.75)', true);
+            renderExtLoadChart('extLoadOutboundChart','extLoadOutboundChartInstance', outb.extensions || [], 'rgba(225,112,85,.75)', false);
+            renderExtLoadChart('extLoadInternalChart','extLoadInternalChartInstance', intl.extensions || [], 'rgba(108,92,231,.75)', true);
+        } catch (e) {
+            console.error('extension-load error:', e);
+        }
+    }
+
+    function renderExtLoadChart(canvasId, instanceVar, items, color, withAnswerRate) {
+        const labels = items.map(i => `${i.extension}${i.name ? ' ('+i.name+')' : ''}`);
+        const counts = items.map(i => i.count);
+        const ar     = items.map(i => +(i.answer_rate * 100).toFixed(1));
+
+        if (window[instanceVar]) window[instanceVar].destroy();
+        const datasets = [{
+            label: 'Chiamate',
+            data: counts,
+            backgroundColor: color,
+            borderRadius: 4,
+            maxBarThickness: 22,
+        }];
+        window[instanceVar] = new Chart(document.getElementById(canvasId), {
+            type: 'bar',
+            data: { labels, datasets },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const it = items[ctx.dataIndex];
+                                if (!it) return '';
+                                const lines = [` Chiamate: ${it.count}`];
+                                if (it.answered != null) lines.push(` Risposte: ${it.answered} (${(it.answer_rate*100).toFixed(1)}%)`);
+                                if (it.total_seconds) lines.push(` Tempo totale: ${Math.round(it.total_seconds/60)}m`);
+                                return lines;
+                            }
+                        }
+                    },
+                },
+                scales: {
+                    x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
+                    y: { grid: { display: false } },
+                },
+            }
+        });
+    }
+
+    /* ── Transfers (heuristic) ──────────────────────── */
+    async function loadTransfers() {
+        try {
+            const lag = parseInt(document.getElementById('transferLag')?.value || 60, 10);
+            const baseParams = periodParams();
+            baseParams.delete('flow_type'); // transfers are intrinsically EI→II
+            baseParams.append('max_lag_seconds', lag);
+            baseParams.append('limit', 30);
+
+            const data = await (await fetch('/api/stats/transfers?' + baseParams.toString())).json();
+            const transfers = data.transfers || [];
+
+            const summary = document.getElementById('transferSummary');
+            const rate = (data.transfer_rate * 100).toFixed(1);
+            summary.textContent = `${data.total_transfers} trasferimenti rilevati su ${data.total_inbound_answered} chiamate inbound risposte (${rate}%, lag ≤ ${data.max_lag_seconds}s)`;
+
+            const list = document.getElementById('transferList');
+            if (!transfers.length) {
+                list.innerHTML = '<p style="color:var(--text-muted);font-size:.85rem;padding:1rem 0;text-align:center">Nessun trasferimento rilevato nel periodo selezionato.</p>';
+                return;
+            }
+
+            const maxCount = Math.max(...transfers.map(t => t.count));
+            const html = ['<table style="width:100%;border-collapse:collapse;font-size:.85rem"><thead><tr>',
+                '<th style="text-align:left;padding:.5rem;border-bottom:1px solid var(--border)">Da estensione</th>',
+                '<th style="text-align:left;padding:.5rem;border-bottom:1px solid var(--border)">→</th>',
+                '<th style="text-align:left;padding:.5rem;border-bottom:1px solid var(--border)">A estensione</th>',
+                '<th style="text-align:right;padding:.5rem;border-bottom:1px solid var(--border)">Volte</th>',
+                '<th style="padding:.5rem;border-bottom:1px solid var(--border);width:30%">Frequenza</th>',
+                '</tr></thead><tbody>'];
+            for (const t of transfers) {
+                const pct = (t.count / maxCount * 100).toFixed(0);
+                html.push('<tr>',
+                    `<td style="padding:.5rem;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${escapeHtml(t.from_ext)}${t.from_name ? ` <small style="color:var(--text-muted)">${escapeHtml(t.from_name)}</small>` : ''}</td>`,
+                    '<td style="padding:.5rem;border-bottom:1px solid var(--border);color:var(--text-muted)">→</td>',
+                    `<td style="padding:.5rem;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${escapeHtml(t.to_ext)}${t.to_name ? ` <small style="color:var(--text-muted)">${escapeHtml(t.to_name)}</small>` : ''}</td>`,
+                    `<td style="padding:.5rem;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;font-weight:600">${t.count}</td>`,
+                    `<td style="padding:.5rem;border-bottom:1px solid var(--border)"><div style="background:rgba(9,132,227,.18);height:8px;border-radius:4px;width:${pct}%"></div></td>`,
+                    '</tr>');
+            }
+            html.push('</tbody></table>');
+            list.innerHTML = html.join('');
+        } catch (e) {
+            console.error('transfers error:', e);
+        }
+    }
+
     /* ── Drill-down ─────────────────────────────────── */
     function drillDownToBucket(label, grouping) {
         // Translate the bar label into a date range for search.
@@ -1997,7 +2283,8 @@
             end_date:       document.getElementById('end-date').value,
             dialed_number:  document.getElementById('dialedNumber').value,
             caller:         document.getElementById('caller').value,
-            account:        document.getElementById('account').value
+            account:        document.getElementById('account').value,
+            flow_type:      currentFlow,
         };
 
         currentFilters = filters;

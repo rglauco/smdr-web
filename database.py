@@ -166,11 +166,15 @@ def add_smdr_record(record_data, raw_data=None):
         conn.close()
 
 
-def count_calls():
-    """Return total number of calls"""
+def count_calls(filters=None):
+    """Return total number of calls (optionally filtered, same shape as get_calls)."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) as total FROM smdr_calls')
+    if filters:
+        where, params = _build_where_clause(filters)
+        cursor.execute(f'SELECT COUNT(*) as total FROM smdr_calls {where}', params or [])
+    else:
+        cursor.execute('SELECT COUNT(*) as total FROM smdr_calls')
     result = cursor.fetchone()
     conn.close()
     return result['total']
@@ -226,6 +230,27 @@ def get_calls(filters=None, limit=100, offset=0):
     return rows
 
 
+# Threshold for distinguishing internal extensions from external numbers,
+# based on caller/dialed length. Italian extensions are typically 3-4 digits.
+_INTERNAL_LEN = 4
+
+# SQL CASE expression that classifies each row by call flow type:
+#   II = Interno → Interno (extension to extension)
+#   IE = Interno → Esterno (extension out)
+#   EI = Esterno → Interno (external in)
+#   EE = Esterno → Esterno (rare; transfers/forwards)
+#   unknown = caller or dialed missing
+_FLOW_TYPE_CASE = f"""
+    CASE
+        WHEN caller IS NULL OR caller = '' OR dialed_number IS NULL OR dialed_number = '' THEN 'unknown'
+        WHEN length(caller) <= {_INTERNAL_LEN} AND length(dialed_number) <= {_INTERNAL_LEN} THEN 'II'
+        WHEN length(caller) <= {_INTERNAL_LEN} THEN 'IE'
+        WHEN length(dialed_number) <= {_INTERNAL_LEN} THEN 'EI'
+        ELSE 'EE'
+    END
+"""
+
+
 def _build_where_clause(filters):
     """Build a WHERE clause and params list from a filters dict.
 
@@ -237,6 +262,7 @@ def _build_where_clause(filters):
       dialed_number    → LIKE match
       caller           → LIKE match
       account          → LIKE match
+      flow_type        → 'II', 'IE', 'EI', 'EE' (computed via length heuristic)
     """
     parts = []
     params = []
@@ -263,6 +289,15 @@ def _build_where_clause(filters):
         if filters.get('account'):
             parts.append('account LIKE ?')
             params.append(f'%{filters["account"]}%')
+        ft = filters.get('flow_type')
+        if ft == 'II':
+            parts.append(f'length(caller) <= {_INTERNAL_LEN} AND length(dialed_number) <= {_INTERNAL_LEN}')
+        elif ft == 'IE':
+            parts.append(f'length(caller) <= {_INTERNAL_LEN} AND length(dialed_number) > {_INTERNAL_LEN}')
+        elif ft == 'EI':
+            parts.append(f'length(caller) > {_INTERNAL_LEN} AND length(dialed_number) <= {_INTERNAL_LEN}')
+        elif ft == 'EE':
+            parts.append(f'length(caller) > {_INTERNAL_LEN} AND length(dialed_number) > {_INTERNAL_LEN}')
 
     where = ('WHERE ' + ' AND '.join(parts)) if parts else ''
     return where, params
@@ -603,6 +638,262 @@ def get_dow_breakdown(filters=None):
         by_dow[eu_dow]['answer_rate'] = round(answered / total, 4) if total else 0.0
 
     return by_dow
+
+
+def get_flow_breakdown(filters=None):
+    """
+    Breakdown by flow type (II / IE / EI / EE) with count, answered, total seconds.
+    The flow filter inside `filters` is intentionally bypassed here so the chart
+    can show all four types when the user is exploring the dataset.
+    """
+    base = dict(filters) if filters else {}
+    base.pop('flow_type', None)
+    where, params = _build_where_clause(base)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            {_FLOW_TYPE_CASE} AS flow,
+            COUNT(*) AS count,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            SUM(connected_time) AS total_seconds
+        FROM smdr_calls {where}
+        GROUP BY flow
+    """, params or [])
+    rows = cursor.fetchall()
+    conn.close()
+
+    LABELS = {
+        'EI': 'Esterno → Interno',
+        'IE': 'Interno → Esterno',
+        'II': 'Interno → Interno',
+        'EE': 'Esterno → Esterno',
+        'unknown': 'Sconosciuto',
+    }
+    by_code = {r['flow']: r for r in rows}
+    out = []
+    for code in ('EI', 'IE', 'II', 'EE', 'unknown'):
+        r = by_code.get(code)
+        out.append({
+            'code': code,
+            'label': LABELS[code],
+            'count': r['count'] if r else 0,
+            'answered': (r['answered'] or 0) if r else 0,
+            'total_seconds': (r['total_seconds'] or 0) if r else 0,
+        })
+    return out
+
+
+def get_extension_load(filters=None, role='inbound', limit=15):
+    """
+    Top extensions by call volume, broken down by their role:
+      role='inbound'   → extensions receiving external calls (E→I): grouped by dialed_number
+      role='outbound'  → extensions calling out (I→E):                grouped by caller
+      role='internal'  → extensions in I→I calls, both as caller and callee aggregated
+    Returns list of {extension, name, count, answered, total_seconds, answer_rate}.
+    """
+    if role not in ('inbound', 'outbound', 'internal'):
+        role = 'inbound'
+
+    base = dict(filters) if filters else {}
+    # Force the flow type to match the role; we do this here rather than via
+    # _build_where_clause so the caller can leave flow_type unset on the UI.
+    base.pop('flow_type', None)
+    if role == 'inbound':
+        base['flow_type'] = 'EI'
+        ext_col = 'dialed_number'
+        name_col = 'party1_name'
+    elif role == 'outbound':
+        base['flow_type'] = 'IE'
+        ext_col = 'caller'
+        name_col = 'party1_name'
+    else:  # internal
+        # We want to count both sides, so use a UNION below.
+        base['flow_type'] = 'II'
+        ext_col = None
+        name_col = None
+
+    where, params = _build_where_clause(base)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if ext_col:
+        cursor.execute(f"""
+            SELECT
+                {ext_col} AS extension,
+                MAX(COALESCE({name_col}, '')) AS name,
+                COUNT(*) AS count,
+                SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+                SUM(connected_time) AS total_seconds
+            FROM smdr_calls {where}
+            GROUP BY {ext_col}
+            ORDER BY count DESC
+            LIMIT ?
+        """, list(params) + [limit])
+    else:
+        # Internal: union caller + dialed sides
+        cursor.execute(f"""
+            SELECT extension, MAX(name) AS name, SUM(count) AS count, SUM(answered) AS answered, SUM(total_seconds) AS total_seconds
+            FROM (
+                SELECT caller AS extension, MAX(COALESCE(party1_name, '')) AS name,
+                       COUNT(*) AS count,
+                       SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+                       SUM(connected_time) AS total_seconds
+                FROM smdr_calls {where}
+                GROUP BY caller
+                UNION ALL
+                SELECT dialed_number AS extension, MAX(COALESCE(party2_device, '')) AS name,
+                       COUNT(*) AS count,
+                       SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+                       SUM(connected_time) AS total_seconds
+                FROM smdr_calls {where}
+                GROUP BY dialed_number
+            )
+            GROUP BY extension
+            ORDER BY count DESC
+            LIMIT ?
+        """, list(params) + list(params) + [limit])
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            'extension': r['extension'],
+            'name': r['name'] or '',
+            'count': r['count'],
+            'answered': r['answered'] or 0,
+            'total_seconds': r['total_seconds'] or 0,
+            'answer_rate': round((r['answered'] or 0) / r['count'], 4) if r['count'] else 0.0,
+        }
+        for r in rows
+    ]
+
+
+def get_transfer_matrix(filters=None, max_lag_seconds=60, limit=30):
+    """
+    Heuristic transfer detection.
+
+    For every answered Esterno→Interno call (src), look for an internal
+    call (dst) where the source extension calls another extension within
+    `max_lag_seconds` after src ended. Each match counts as a likely
+    transfer src.dialed → dst.dialed.
+
+    Returns:
+        {
+          'transfers': [{'from_ext': '300', 'to_ext': '243', 'count': 12, ...}, ...],
+          'total_inbound_answered': N,
+          'total_transfers': N_t,
+          'transfer_rate': N_t / N,
+          'max_lag_seconds': max_lag_seconds,
+        }
+
+    Note: this is a best-effort heuristic. The PBX does not emit a
+    correlation ID, so we infer transfers from temporal proximity.
+    """
+    base = dict(filters) if filters else {}
+    base.pop('flow_type', None)
+    where, params = _build_where_clause(base)
+
+    src_where = where + (' AND ' if where else 'WHERE ') + (
+        f"src.call_direction = 'Inbound' "
+        f"AND src.connected_time > 0 "
+        f"AND length(src.caller) > {_INTERNAL_LEN} "
+        f"AND length(src.dialed_number) <= {_INTERNAL_LEN}"
+    )
+    # We need to alias the table inside the WHERE — simpler to just inline.
+    inbound_filter = (
+        f"src.call_direction = 'Inbound' "
+        f"AND src.connected_time > 0 "
+        f"AND length(src.caller) > {_INTERNAL_LEN} "
+        f"AND length(src.dialed_number) <= {_INTERNAL_LEN}"
+    )
+    dst_filter = (
+        f"length(dst.caller) <= {_INTERNAL_LEN} "
+        f"AND length(dst.dialed_number) <= {_INTERNAL_LEN} "
+        f"AND dst.caller = src.dialed_number "
+        f"AND dst.dialed_number != src.dialed_number"
+    )
+
+    # Translate the date filter (if any) into clauses applied to both src and dst.
+    extra = []
+    extra_params = []
+    if base.get('start_date'):
+        extra.append('datetime(src.call_start) >= datetime(?) AND datetime(dst.call_start) >= datetime(?)')
+        extra_params.extend([base['start_date'], base['start_date']])
+    if base.get('end_date'):
+        extra.append('datetime(src.call_start) <= datetime(?) AND datetime(dst.call_start) <= datetime(?)')
+        extra_params.extend([base['end_date'], base['end_date']])
+    extra_clause = (' AND ' + ' AND '.join(extra)) if extra else ''
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Count answered inbound calls in scope (denominator)
+    cursor.execute(f"""
+        SELECT COUNT(*) AS n FROM smdr_calls src
+        WHERE {inbound_filter}
+        {extra_clause.replace(' AND dst', ' AND src') if False else ''}
+        {(' AND ' + ' AND '.join(c for c in extra if 'src' in c)) if False else ''}
+    """ , [])
+    # Simpler: re-run with src-only date filters
+    src_only_extras = []
+    src_only_params = []
+    if base.get('start_date'):
+        src_only_extras.append('datetime(src.call_start) >= datetime(?)')
+        src_only_params.append(base['start_date'])
+    if base.get('end_date'):
+        src_only_extras.append('datetime(src.call_start) <= datetime(?)')
+        src_only_params.append(base['end_date'])
+    cursor.execute(
+        f"SELECT COUNT(*) AS n FROM smdr_calls src WHERE {inbound_filter}"
+        + ((' AND ' + ' AND '.join(src_only_extras)) if src_only_extras else ''),
+        src_only_params,
+    )
+    total_inbound_answered = cursor.fetchone()['n']
+
+    # The actual transfer matrix
+    cursor.execute(f"""
+        SELECT
+            src.dialed_number AS from_ext,
+            MAX(COALESCE(src.party1_name, '')) AS from_name,
+            dst.dialed_number AS to_ext,
+            MAX(COALESCE(dst.party2_device, '')) AS to_name,
+            COUNT(*) AS count
+        FROM smdr_calls src
+        JOIN smdr_calls dst ON
+            {dst_filter}
+            AND datetime(dst.call_start) > datetime(src.call_start)
+            AND (julianday(dst.call_start) - julianday(src.call_start)) * 86400 <= ?
+        WHERE {inbound_filter}
+        {extra_clause}
+        GROUP BY from_ext, to_ext
+        ORDER BY count DESC
+        LIMIT ?
+    """, [max_lag_seconds] + extra_params + [limit])
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    transfers = [
+        {
+            'from_ext': r['from_ext'],
+            'from_name': r['from_name'] or '',
+            'to_ext': r['to_ext'],
+            'to_name': r['to_name'] or '',
+            'count': r['count'],
+        }
+        for r in rows
+    ]
+    total_transfers = sum(t['count'] for t in transfers)
+
+    return {
+        'transfers': transfers,
+        'total_inbound_answered': total_inbound_answered,
+        'total_transfers': total_transfers,
+        'transfer_rate': round(total_transfers / total_inbound_answered, 4) if total_inbound_answered else 0.0,
+        'max_lag_seconds': max_lag_seconds,
+    }
 
 
 def get_anomalies(filters=None, lookback_days=60, z_threshold=2.0):

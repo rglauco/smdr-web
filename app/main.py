@@ -31,6 +31,9 @@ from database import (
     get_dow_breakdown,
     get_anomalies,
     get_period_comparison,
+    get_flow_breakdown,
+    get_extension_load,
+    get_transfer_matrix,
     iter_calls_for_export,
 )
 
@@ -127,6 +130,9 @@ def _parse_filters_from_args():
         val = request.args.get(key)
         if val:
             filters[key] = val
+    flow_type = request.args.get('flow_type')
+    if flow_type in ('II', 'IE', 'EI', 'EE'):
+        filters['flow_type'] = flow_type
     start_date = request.args.get('start_date')
     if start_date:
         filters['start_date'] = start_date
@@ -237,6 +243,9 @@ def search():
         'account': request.args.get('account'),
         'is_internal': request.args.get('is_internal'),
     }
+    ft = request.args.get('flow_type')
+    if ft in ('II', 'IE', 'EI', 'EE'):
+        filters['flow_type'] = ft
 
     try:
         limit = int(request.args.get('limit', 100))
@@ -250,7 +259,7 @@ def search():
     offset = max(0, offset)
 
     calls = get_calls(filters, limit, offset)
-    total_count = count_calls()
+    total_count = count_calls(filters)
 
     return jsonify({
         'calls': _localize_calls([dict(row) for row in calls]),
@@ -263,34 +272,9 @@ def search():
 @app.route('/statistics')
 @api_login_required
 def statistics():
-    """Statistics dashboard with date range filters"""
-    filters = {}
-
-    call_direction = request.args.get('call_direction')
-    if call_direction:
-        filters['call_direction'] = call_direction
-
-    is_internal = request.args.get('is_internal')
-    if is_internal:
-        filters['is_internal'] = is_internal
-
-    start_date = request.args.get('start_date')
-    if start_date:
-        filters['start_date'] = start_date
-
-    end_date = request.args.get('end_date')
-    if end_date:
-        # Add time to make it end-of-day inclusive
-        if len(end_date) == 10:  # YYYY-MM-DD format
-            filters['end_date'] = end_date + ' 23:59:59'
-        else:
-            filters['end_date'] = end_date
-
-    stats = get_call_stats(filters)
-
-    # Add timezone info to statistics response
+    """Statistics dashboard with date range filters and optional flow_type."""
+    stats = get_call_stats(_parse_filters_from_args())
     stats['tz_info'] = get_tz_info()
-
     return jsonify(stats)
 
 
@@ -540,6 +524,49 @@ def export_calls_csv():
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
+
+
+@app.route('/api/stats/flows')
+@api_login_required
+def get_flows_route():
+    """Breakdown per tipo flusso: E→I, I→E, I→I, E→E."""
+    return jsonify({'flows': get_flow_breakdown(_parse_filters_from_args())})
+
+
+@app.route('/api/stats/extension-load')
+@api_login_required
+def get_extension_load_route():
+    """Top extensions by call volume. ?role=inbound|outbound|internal&limit=N"""
+    role = request.args.get('role', 'inbound')
+    if role not in ('inbound', 'outbound', 'internal'):
+        role = 'inbound'
+    try:
+        limit = int(request.args.get('limit', 15))
+    except (TypeError, ValueError):
+        limit = 15
+    limit = max(1, min(limit, 100))
+    return jsonify({
+        'role': role,
+        'limit': limit,
+        'extensions': get_extension_load(_parse_filters_from_args(), role=role, limit=limit),
+    })
+
+
+@app.route('/api/stats/transfers')
+@api_login_required
+def get_transfers_route():
+    """Heuristic transfer detection. ?max_lag_seconds=N&limit=N"""
+    try:
+        lag = int(request.args.get('max_lag_seconds', 60))
+    except (TypeError, ValueError):
+        lag = 60
+    try:
+        limit = int(request.args.get('limit', 30))
+    except (TypeError, ValueError):
+        limit = 30
+    lag = max(5, min(lag, 600))
+    limit = max(1, min(limit, 100))
+    return jsonify(get_transfer_matrix(_parse_filters_from_args(), max_lag_seconds=lag, limit=limit))
 
 
 @app.route('/api/health')
