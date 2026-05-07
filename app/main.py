@@ -35,6 +35,7 @@ from database import (
     get_extension_load,
     get_transfer_matrix,
     iter_calls_for_export,
+    get_number_stats,
 )
 
 # Load environment variables from .env
@@ -567,6 +568,21 @@ def get_transfers_route():
     lag = max(5, min(lag, 600))
     limit = max(1, min(limit, 100))
     return jsonify(get_transfer_matrix(_parse_filters_from_args(), max_lag_seconds=lag, limit=limit))
+
+
+@app.route('/api/stats/number-detail')
+@api_login_required
+def get_number_detail_route():
+    """Detailed statistics for a single phone number or extension."""
+    number = request.args.get('number', '').strip()
+    field = request.args.get('field', 'dialed_number')
+    if not number:
+        return jsonify({'error': 'Parametro number richiesto'}), 400
+    if field not in ('dialed_number', 'caller'):
+        field = 'dialed_number'
+    result = get_number_stats(number, field, _parse_filters_from_args())
+    result['recent_calls'] = _localize_calls(result['recent_calls'])
+    return jsonify(result)
 
 
 @app.route('/api/health')

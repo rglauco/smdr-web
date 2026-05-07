@@ -1004,6 +1004,180 @@ def get_period_comparison(filters):
     }
 
 
+def get_number_stats(number, field='dialed_number', filters=None):
+    """
+    Detailed statistics for a specific phone number.
+    field: 'dialed_number' or 'caller' — which column to match against.
+    Returns KPIs, hourly/DOW/duration breakdown, daily trend, counterparts, recent calls.
+    """
+    if field not in ('dialed_number', 'caller'):
+        field = 'dialed_number'
+
+    base = dict(filters) if filters else {}
+    base.pop('dialed_number', None)
+    base.pop('caller', None)
+    where, params = _build_where_clause(base)
+
+    if where:
+        full_where = where + f' AND {field} = ?'
+    else:
+        full_where = f'WHERE {field} = ?'
+    full_params = list(params) + [number]
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(f"""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            SUM(CASE WHEN connected_time = 0 THEN 1 ELSE 0 END) AS abandoned,
+            AVG(CASE WHEN connected_time > 0 THEN connected_time END) AS avg_duration,
+            MAX(connected_time) AS max_duration,
+            AVG(CASE WHEN connected_time > 0 THEN ring_time END) AS avg_ring,
+            SUM(connected_time) AS total_seconds,
+            MIN(call_start) AS first_call,
+            MAX(call_start) AS last_call
+        FROM smdr_calls {full_where}
+    """, full_params)
+    row = cursor.fetchone()
+    total = row['total'] or 0
+    answered = row['answered'] or 0
+    kpis = {
+        'total': total,
+        'answered': answered,
+        'abandoned': row['abandoned'] or 0,
+        'answer_rate': round(answered / total, 4) if total else 0,
+        'avg_duration_seconds': round(row['avg_duration'] or 0, 1),
+        'max_duration_seconds': row['max_duration'] or 0,
+        'avg_ring_seconds': round(row['avg_ring'] or 0, 1),
+        'total_seconds': row['total_seconds'] or 0,
+        'first_call': row['first_call'],
+        'last_call': row['last_call'],
+    }
+
+    cursor.execute(f"""
+        SELECT CAST(strftime('%H', call_start) AS INTEGER) AS hour,
+               COUNT(*) AS count,
+               SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered
+        FROM smdr_calls {full_where}
+        GROUP BY hour ORDER BY hour
+    """, full_params)
+    hourly_map = {r['hour']: {'count': r['count'], 'answered': r['answered'] or 0}
+                  for r in cursor.fetchall()}
+    hourly = [{'hour': h,
+               'count': hourly_map.get(h, {}).get('count', 0),
+               'answered': hourly_map.get(h, {}).get('answered', 0)}
+              for h in range(24)]
+
+    cursor.execute(f"""
+        SELECT CAST(strftime('%w', call_start) AS INTEGER) AS dow,
+               COUNT(*) AS count,
+               SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered
+        FROM smdr_calls {full_where}
+        GROUP BY dow
+    """, full_params)
+    DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
+    dow_map = {}
+    for r in cursor.fetchall():
+        eu_dow = (r['dow'] + 6) % 7
+        dow_map[eu_dow] = {'count': r['count'], 'answered': r['answered'] or 0}
+    dow = [{'day': DAYS[i],
+            'count': dow_map.get(i, {}).get('count', 0),
+            'answered': dow_map.get(i, {}).get('answered', 0)}
+           for i in range(7)]
+
+    cursor.execute(f"""
+        SELECT
+            CASE
+                WHEN connected_time = 0 THEN '0_no_answer'
+                WHEN connected_time <= 10 THEN '1_0_10s'
+                WHEN connected_time <= 30 THEN '2_10_30s'
+                WHEN connected_time <= 60 THEN '3_30_60s'
+                WHEN connected_time <= 300 THEN '4_1_5m'
+                WHEN connected_time <= 900 THEN '5_5_15m'
+                WHEN connected_time <= 1800 THEN '6_15_30m'
+                ELSE '7_30m_plus'
+            END AS bucket,
+            COUNT(*) AS count
+        FROM smdr_calls {full_where}
+        GROUP BY bucket
+    """, full_params)
+    HIST_LABELS = [
+        ('0_no_answer', 'Non risposte'), ('1_0_10s', '0-10s'),
+        ('2_10_30s', '10-30s'), ('3_30_60s', '30-60s'),
+        ('4_1_5m', '1-5min'), ('5_5_15m', '5-15min'),
+        ('6_15_30m', '15-30min'), ('7_30m_plus', '>30min'),
+    ]
+    hist_counts = {key: 0 for key, _ in HIST_LABELS}
+    for r in cursor.fetchall():
+        if r['bucket'] in hist_counts:
+            hist_counts[r['bucket']] = r['count']
+    histogram = [{'bucket': label, 'count': hist_counts[key]} for key, label in HIST_LABELS]
+
+    cursor.execute(f"""
+        SELECT strftime('%Y-%m-%d', call_start) AS day,
+               COUNT(*) AS count,
+               SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered
+        FROM smdr_calls {full_where}
+        GROUP BY day ORDER BY day DESC
+        LIMIT 90
+    """, full_params)
+    trend = [{'day': r['day'], 'count': r['count'], 'answered': r['answered'] or 0}
+             for r in cursor.fetchall()]
+    trend.reverse()
+
+    other_col = 'caller' if field == 'dialed_number' else 'dialed_number'
+    other_name_col = 'party1_name' if other_col == 'caller' else 'party2_name'
+    counter_where = full_where + f" AND {other_col} IS NOT NULL AND {other_col} != ''"
+    cursor.execute(f"""
+        SELECT
+            {other_col} AS number,
+            MAX(COALESCE({other_name_col}, '')) AS name,
+            COUNT(*) AS count,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            SUM(connected_time) AS total_seconds,
+            AVG(CASE WHEN connected_time > 0 THEN connected_time END) AS avg_duration
+        FROM smdr_calls {counter_where}
+        GROUP BY {other_col}
+        ORDER BY count DESC
+        LIMIT 10
+    """, full_params)
+    counterparts = [
+        {
+            'number': r['number'],
+            'name': r['name'] or '',
+            'count': r['count'],
+            'answered': r['answered'] or 0,
+            'total_seconds': r['total_seconds'] or 0,
+            'avg_duration': round(r['avg_duration'] or 0, 1),
+        }
+        for r in cursor.fetchall()
+    ]
+
+    cursor.execute(f"""
+        SELECT id, call_start, call_direction, caller, dialed_number,
+               connected_time, ring_time, party1_name, party2_name, account
+        FROM smdr_calls {full_where}
+        ORDER BY call_start DESC
+        LIMIT 20
+    """, full_params)
+    recent = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+    return {
+        'number': number,
+        'field': field,
+        'kpis': kpis,
+        'hourly': hourly,
+        'dow': dow,
+        'histogram': histogram,
+        'trend': trend,
+        'counterparts': counterparts,
+        'recent_calls': recent,
+    }
+
+
 def iter_calls_for_export(filters=None):
     """
     Generator that yields call rows (as dicts) for streaming CSV export.

@@ -473,6 +473,50 @@
             justify-content: flex-end;
             gap: .5rem;
         }
+        .modal-box--wide {
+            max-width: 900px;
+        }
+        .nd-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: .6rem;
+            margin-bottom: 1rem;
+        }
+        .nd-kpi {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: .6rem .9rem;
+        }
+        .nd-kpi-value { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+        .nd-kpi-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); font-weight: 600; margin-top: .15rem; }
+        .nd-charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: .75rem;
+            margin-bottom: .75rem;
+        }
+        .nd-chart-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: .75rem;
+        }
+        .nd-chart-title {
+            font-size: .75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--text-secondary);
+            margin-bottom: .5rem;
+        }
+        .nd-section {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: .75rem;
+            margin-bottom: .75rem;
+        }
 
         /* ── Results table ────────────────────────────────── */
         .results-panel {
@@ -1195,6 +1239,52 @@
     </div>
 </div>
 
+<!-- Number Detail Modal -->
+<div class="modal-overlay" id="numDetailModal">
+    <div class="modal-box modal-box--wide">
+        <div class="modal-header">
+            <h3 id="numDetailTitle">Dettaglio Numero</h3>
+            <button class="modal-close" onclick="closeNumDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="numDetailBody" style="max-height:80vh;overflow-y:auto;padding:1rem 1.5rem">
+            <div class="nd-kpi-grid" id="ndKpis">
+                <p style="color:var(--text-secondary);grid-column:1/-1">Caricamento...</p>
+            </div>
+            <div class="nd-charts-row">
+                <div class="nd-chart-box">
+                    <div class="nd-chart-title">Distribuzione oraria</div>
+                    <canvas id="ndHourlyChart" height="140"></canvas>
+                </div>
+                <div class="nd-chart-box">
+                    <div class="nd-chart-title">Giorno della settimana</div>
+                    <canvas id="ndDowChart" height="140"></canvas>
+                </div>
+            </div>
+            <div class="nd-charts-row">
+                <div class="nd-chart-box">
+                    <div class="nd-chart-title">Distribuzione durate</div>
+                    <canvas id="ndHistChart" height="140"></canvas>
+                </div>
+                <div class="nd-chart-box">
+                    <div class="nd-chart-title">Tendenza giornaliera</div>
+                    <canvas id="ndTrendChart" height="140"></canvas>
+                </div>
+            </div>
+            <div class="nd-section">
+                <div class="nd-chart-title" id="ndCounterpartsTitle">Controparti principali</div>
+                <div id="ndCounterparts"></div>
+            </div>
+            <div class="nd-section" style="margin-bottom:0">
+                <div class="nd-chart-title">Ultime 20 chiamate</div>
+                <div id="ndRecentCalls" style="overflow-x:auto"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" onclick="closeNumDetailModal()">Chiudi</button>
+        </div>
+    </div>
+</div>
+
 <footer>
     <div class="container">
         SMDR Call Analytics &mdash; <a href="/">Dashboard</a>
@@ -1229,6 +1319,12 @@
     let extLoadInboundChartInstance = null;
     let extLoadOutboundChartInstance = null;
     let extLoadInternalChartInstance = null;
+
+    // Number detail modal chart instances
+    let ndHourlyInstance = null;
+    let ndDowInstance = null;
+    let ndHistInstance = null;
+    let ndTrendInstance = null;
 
     // Global flow filter ('' = all, 'EI' | 'IE' | 'II' | 'EE')
     let currentFlow = '';
@@ -1550,11 +1646,22 @@
                 options: {
                     indexAxis: 'y',
                     responsive: true,
-                    plugins: { legend: { display: false } },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { footer: () => 'Clicca per il dettaglio' } }
+                    },
                     scales: {
                         x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
                         y: { grid: { display: false } }
-                    }
+                    },
+                    onClick: (evt, elements) => {
+                        if (!elements || !elements.length) return;
+                        const num = stats.top_dialed[elements[0].index]?.dialed_number;
+                        if (num) openNumDetail(num, 'dialed_number');
+                    },
+                    onHover: (evt, elements) => {
+                        evt.native && (evt.native.target.style.cursor = elements.length ? 'pointer' : 'default');
+                    },
                 }
             });
 
@@ -1970,6 +2077,201 @@
         document.getElementById('anomalyModal').classList.remove('active');
     }
 
+    /* ── Number detail modal ────────────────────────── */
+    async function openNumDetail(number, field) {
+        document.getElementById('numDetailTitle').textContent = number;
+        document.getElementById('ndKpis').innerHTML = '<p style="color:var(--text-secondary);grid-column:1/-1;padding:.5rem 0">Caricamento...</p>';
+        document.getElementById('numDetailModal').classList.add('active');
+
+        try {
+            const p = new URLSearchParams({ number, field });
+            if (periodStartDate) p.append('start_date', periodStartDate);
+            if (periodEndDate)   p.append('end_date', periodEndDate);
+            if (currentFlow)     p.append('flow_type', currentFlow);
+            const data = await (await fetch('/api/stats/number-detail?' + p.toString())).json();
+            renderNumDetail(data);
+        } catch (e) {
+            document.getElementById('ndKpis').innerHTML = '<p style="color:var(--accent-red);grid-column:1/-1">Errore nel caricamento dei dati.</p>';
+        }
+    }
+
+    function closeNumDetailModal() {
+        document.getElementById('numDetailModal').classList.remove('active');
+    }
+
+    function renderNumDetail(data) {
+        const k = data.kpis;
+        const fmtDur = s => {
+            s = Math.round(s || 0);
+            return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+        };
+        const fmtPct = v => `${(v*100).toFixed(1)}%`;
+        const fmtTotal = s => {
+            s = Math.round(s || 0);
+            if (s < 60) return `${s}s`;
+            if (s < 3600) return `${Math.floor(s/60)}m`;
+            return `${(s/3600).toFixed(1)}h`;
+        };
+
+        document.getElementById('ndKpis').innerHTML = [
+            `<div class="nd-kpi"><div class="nd-kpi-value">${k.total.toLocaleString('it-IT')}</div><div class="nd-kpi-label">Chiamate totali</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value" style="color:var(--accent)">${k.answered}</div><div class="nd-kpi-label">Con risposta</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value" style="color:var(--accent-red)">${k.abandoned}</div><div class="nd-kpi-label">Senza risposta</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value">${fmtPct(k.answer_rate)}</div><div class="nd-kpi-label">Tasso di risposta</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value">${fmtDur(k.avg_duration_seconds)}</div><div class="nd-kpi-label">Durata media</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value">${fmtDur(k.avg_ring_seconds)}</div><div class="nd-kpi-label">Attesa media</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value">${fmtDur(k.max_duration_seconds)}</div><div class="nd-kpi-label">Durata massima</div></div>`,
+            `<div class="nd-kpi"><div class="nd-kpi-value">${fmtTotal(k.total_seconds)}</div><div class="nd-kpi-label">Tempo totale</div></div>`,
+            k.first_call ? `<div class="nd-kpi"><div class="nd-kpi-value" style="font-size:.95rem">${(k.first_call||'').slice(0,10)}</div><div class="nd-kpi-label">Prima chiamata</div></div>` : '<div class="nd-kpi"></div>',
+        ].join('');
+
+        // Hourly chart
+        if (ndHourlyInstance) ndHourlyInstance.destroy();
+        ndHourlyInstance = new Chart(document.getElementById('ndHourlyChart'), {
+            type: 'bar',
+            data: {
+                labels: data.hourly.map(h => h.hour + ':00'),
+                datasets: [{
+                    label: 'Chiamate',
+                    data: data.hourly.map(h => h.count),
+                    backgroundColor: data.hourly.map((h, i) => {
+                        if (i >= 6 && i < 12)  return 'rgba(0,184,148,.7)';
+                        if (i >= 12 && i < 18) return 'rgba(59,89,152,.7)';
+                        if (i >= 18 && i < 22) return 'rgba(225,112,85,.7)';
+                        return 'rgba(178,190,195,.5)';
+                    }),
+                    borderRadius: 3,
+                    maxBarThickness: 20,
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 0, callback: (v, i) => i % 3 === 0 ? data.hourly[i].hour + ':00' : '' } },
+                    y: { beginAtZero: true, grid: { color: '#f0f2f5' } }
+                }
+            }
+        });
+
+        // DOW chart
+        if (ndDowInstance) ndDowInstance.destroy();
+        ndDowInstance = new Chart(document.getElementById('ndDowChart'), {
+            type: 'bar',
+            data: {
+                labels: data.dow.map(d => d.day),
+                datasets: [
+                    { label: 'Risposte',     data: data.dow.map(d => d.answered),             backgroundColor: 'rgba(0,184,148,.75)',  borderRadius: 3, maxBarThickness: 30 },
+                    { label: 'Non risposte', data: data.dow.map(d => d.count - d.answered),   backgroundColor: 'rgba(214,48,49,.5)',   borderRadius: 3, maxBarThickness: 30 },
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, grid: { color: '#f0f2f5' } }
+                }
+            }
+        });
+
+        // Duration histogram
+        if (ndHistInstance) ndHistInstance.destroy();
+        ndHistInstance = new Chart(document.getElementById('ndHistChart'), {
+            type: 'bar',
+            data: {
+                labels: data.histogram.map(b => b.bucket),
+                datasets: [{ label: 'Chiamate', data: data.histogram.map(b => b.count), backgroundColor: 'rgba(108,92,231,.7)', borderRadius: 3, maxBarThickness: 30 }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 } } },
+                    y: { beginAtZero: true, grid: { color: '#f0f2f5' } }
+                }
+            }
+        });
+
+        // Daily trend
+        if (ndTrendInstance) ndTrendInstance.destroy();
+        ndTrendInstance = new Chart(document.getElementById('ndTrendChart'), {
+            type: 'line',
+            data: {
+                labels: data.trend.map(t => t.day.slice(5)),
+                datasets: [
+                    { label: 'Totale',   data: data.trend.map(t => t.count),    borderColor: 'rgba(59,89,152,1)',   backgroundColor: 'rgba(59,89,152,.1)', borderWidth: 2, pointRadius: 2, tension: .3, fill: true },
+                    { label: 'Risposte', data: data.trend.map(t => t.answered), borderColor: 'rgba(0,184,148,1)',   backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 1, tension: .3, borderDash: [4,4] },
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 45, maxTicksLimit: 12 } },
+                    y: { beginAtZero: true, grid: { color: '#f0f2f5' } }
+                }
+            }
+        });
+
+        // Counterparts table
+        const cpTitle = data.field === 'dialed_number'
+            ? 'Chi ha chiamato questo numero'
+            : 'Numeri/estensioni raggiunti';
+        document.getElementById('ndCounterpartsTitle').textContent = cpTitle;
+        if (!data.counterparts.length) {
+            document.getElementById('ndCounterparts').innerHTML = '<p style="color:var(--text-muted);font-size:.82rem;padding:.4rem 0">Nessun dato</p>';
+        } else {
+            const rows = data.counterparts.map(c => `
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:.35rem .4rem;font-size:.82rem;font-variant-numeric:tabular-nums">${escapeHtml(c.number||'—')}</td>
+                    <td style="padding:.35rem .4rem;font-size:.82rem;color:var(--text-secondary)">${escapeHtml(c.name||'—')}</td>
+                    <td style="padding:.35rem .4rem;font-size:.82rem;text-align:right">${c.count}</td>
+                    <td style="padding:.35rem .4rem;font-size:.82rem;text-align:right">${c.answered}</td>
+                    <td style="padding:.35rem .4rem;font-size:.82rem;text-align:right">${fmtDur(c.avg_duration)}</td>
+                </tr>`).join('');
+            document.getElementById('ndCounterparts').innerHTML = `
+                <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="border-bottom:2px solid var(--border)">
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Numero</th>
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Nome</th>
+                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Chiamate</th>
+                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Risposte</th>
+                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Durata media</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+        }
+
+        // Recent calls table
+        const fmtTs = ts => (ts || '').replace('T', ' ').slice(0, 16);
+        if (!data.recent_calls.length) {
+            document.getElementById('ndRecentCalls').innerHTML = '<p style="color:var(--text-muted);font-size:.82rem;padding:.4rem 0">Nessuna chiamata</p>';
+        } else {
+            const rows2 = data.recent_calls.map(c => `
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:.32rem .4rem;font-size:.8rem;white-space:nowrap">${fmtTs(c.call_start)}</td>
+                    <td style="padding:.32rem .4rem;font-size:.8rem"><span class="badge badge-${(c.call_direction||'').toLowerCase()}">${escapeHtml(c.call_direction||'—')}</span></td>
+                    <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums">${escapeHtml(c.caller||'—')}</td>
+                    <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums">${escapeHtml(c.dialed_number||'—')}</td>
+                    <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right">${c.connected_time > 0 ? fmtDur(c.connected_time) : '<span style="color:var(--accent-red)">—</span>'}</td>
+                    <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right;color:var(--text-muted)">${c.ring_time > 0 ? Math.round(c.ring_time) + 's att.' : ''}</td>
+                </tr>`).join('');
+            document.getElementById('ndRecentCalls').innerHTML = `
+                <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="border-bottom:2px solid var(--border)">
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Data/Ora</th>
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Dir.</th>
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Chiamante</th>
+                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Numero</th>
+                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Durata</th>
+                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Attesa</th>
+                    </tr></thead>
+                    <tbody>${rows2}</tbody>
+                </table>`;
+        }
+    }
+
     /* ── Period comparison (Δ% on KPI cards) ─────────── */
     async function loadComparison() {
         clearDeltas();
@@ -2107,18 +2409,17 @@
                 fetch('/api/stats/extension-load?role=outbound&limit=12&' + baseParams.toString()).then(r => r.json()),
                 fetch('/api/stats/extension-load?role=internal&limit=15&' + baseParams.toString()).then(r => r.json()),
             ]);
-            renderExtLoadChart('extLoadInboundChart', 'extLoadInboundChartInstance', inb.extensions || [], 'rgba(9,132,227,.75)', true);
-            renderExtLoadChart('extLoadOutboundChart','extLoadOutboundChartInstance', outb.extensions || [], 'rgba(225,112,85,.75)', false);
-            renderExtLoadChart('extLoadInternalChart','extLoadInternalChartInstance', intl.extensions || [], 'rgba(108,92,231,.75)', true);
+            renderExtLoadChart('extLoadInboundChart', 'extLoadInboundChartInstance', inb.extensions || [], 'rgba(9,132,227,.75)', true,  'dialed_number');
+            renderExtLoadChart('extLoadOutboundChart','extLoadOutboundChartInstance', outb.extensions || [], 'rgba(225,112,85,.75)', false, 'caller');
+            renderExtLoadChart('extLoadInternalChart','extLoadInternalChartInstance', intl.extensions || [], 'rgba(108,92,231,.75)', true,  'caller');
         } catch (e) {
             console.error('extension-load error:', e);
         }
     }
 
-    function renderExtLoadChart(canvasId, instanceVar, items, color, withAnswerRate) {
-        const labels = items.map(i => `${i.extension}${i.name ? ' ('+i.name+')' : ''}`);
+    function renderExtLoadChart(canvasId, instanceVar, items, color, withAnswerRate, clickField) {
+        const labels = items.map(i => i.extension);
         const counts = items.map(i => i.count);
-        const ar     = items.map(i => +(i.answer_rate * 100).toFixed(1));
 
         if (window[instanceVar]) window[instanceVar].destroy();
         const datasets = [{
@@ -2145,13 +2446,22 @@
                                 if (it.answered != null) lines.push(` Risposte: ${it.answered} (${(it.answer_rate*100).toFixed(1)}%)`);
                                 if (it.total_seconds) lines.push(` Tempo totale: ${Math.round(it.total_seconds/60)}m`);
                                 return lines;
-                            }
+                            },
+                            footer: () => 'Clicca per il dettaglio'
                         }
                     },
                 },
                 scales: {
                     x: { beginAtZero: true, grid: { color: '#f0f2f5' } },
                     y: { grid: { display: false } },
+                },
+                onClick: (evt, elements) => {
+                    if (!elements || !elements.length || !clickField) return;
+                    const ext = items[elements[0].index]?.extension;
+                    if (ext) openNumDetail(ext, clickField);
+                },
+                onHover: (evt, elements) => {
+                    evt.native && (evt.native.target.style.cursor = elements.length ? 'pointer' : 'default');
                 },
             }
         });
@@ -2535,6 +2845,9 @@
     document.getElementById('tzModal').addEventListener('click', function(e) {
         if (e.target === this) closeTzModal();
     });
+    document.getElementById('numDetailModal').addEventListener('click', function(e) {
+        if (e.target === this) closeNumDetailModal();
+    });
 
     // Update timezone preview on select change
     document.getElementById('tzSelect').addEventListener('change', updateTzPreview);
@@ -2542,7 +2855,10 @@
 
     // Close modal on Escape
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeTzModal();
+        if (e.key === 'Escape') {
+            closeTzModal();
+            closeNumDetailModal();
+        }
     });
 </script>
 </body>
