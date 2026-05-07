@@ -5,41 +5,49 @@ Porting dell'applicazione C# SMDR in Python/Flask/SQLite3.
 ## 📋 Caratteristiche
 
 ### TCP SMDR Server
-- Port del server TCP originale in C#
+- Porting fedele del server TCP originale in C#
 - Ascolta sulla porta 3000
-- Riceve record SMDR come CSV (32 campi se completo, approssimativamente 30 per record completo)
-- Archive automaticamente i dati nel database SQLite3
+- Riceve record SMDR come CSV — un record valido è composto da **esattamente 30 campi separati da virgola su una sola riga** (parser permissivo che accetta anche record con ≥6 campi)
+- Archivia automaticamente i dati nel database SQLite3 e tiene un dump grezzo mensile in `data/reports/YYYY.MM.csv`
 
 ### Flask Web Application
 - Web UI interattiva per esplorare i dati
 - Ricerche avanzate con filtri multipli
 - Statistiche visive (grafici Chart.js)
-- Nessuna autenticazione configurata
+- Autenticazione via sessione Flask, credenziali da `.env`
+- Gestione timezone configurabile a runtime (DST automatico)
 
 ### Database
 - SQLite3 integrato
 - Indici ottimizzati per query rapide
 - Supporto per timestamp e duration
+- Tabella `app_settings` per configurazione runtime (timezone, modalità timestamp)
 
 ## 📁 Struttura Progetto
 
 ```
-smdr-python/
+smdr-web/
 ├── app/                           # Flask application
-│   ├── main.py                    # Flask web server
+│   ├── main.py                    # Flask web server e API JSON
 │   └── templates/
-│       └── index.html            # Web UI
+│       ├── index.html             # Web UI principale
+│       └── login.html             # Form di login
 ├── server/                        # TCP SMDR server
-│   ├── tcpsmdrserver.py           # TCP server implementation
-│   └── read.py                    # Utility to read database
-├── data/                          # SQLite database (volume)
-├── database.py                    # Database functions
-├── run.py                         # Main entry point
-├── requirements.txt              # Python dependencies
-├── Dockerfile.flask              # Dockerfile for Flask
-├── Dockerfile.tcpserver          # Dockerfile for TCP server
-├── docker-compose.yml            # Docker Compose configuration
-└── README.md                     # This file
+│   ├── tcpsmdrserver.py           # TCP server (porting fedele del C#)
+│   └── read.py                    # Utility CLI per leggere il DB
+├── data/                          # SQLite database + reports CSV mensili
+│   └── reports/                   # Dump grezzi YYYY.MM.csv
+├── database.py                    # Schema, query, settings, timezone helpers
+├── run.py                         # Entry point: avvia Flask + TCP server
+├── check_db.py                    # Script diagnostico per il DB
+├── test_e2e.py                    # Test manuale end-to-end (TCP → DB)
+├── client_test.py                 # Client TCP di test
+├── test_record_client.py          # Invio record SMDR di esempio
+├── requirements.txt               # Dipendenze Python
+├── Dockerfile.flask               # Dockerfile per Flask
+├── Dockerfile.tcpserver           # Dockerfile per TCP server
+├── docker-compose.yml             # Configurazione Docker Compose
+└── README.md                      # Questo file
 ```
 
 ## 🚀 Avvio Locale
@@ -51,7 +59,7 @@ cd smdr-python
 python run.py
 ```
 
-Questo avvierà sia il server Flask (port 5000) che il TCP Server (port 3000).
+Questo avvierà sia il server Flask (port 5000) che il TCP Server (port 3000) nello stesso processo (TCP server in thread di background, Flask sul thread principale).
 
 ### Opzione 2: Avvio Separato
 
@@ -96,13 +104,27 @@ DTMF,Nome1,Phone1,Nome2,Phone2,...,Y,CODE,user,15.50,EUR,...
 - Grafici: chiamate per mese, direzione, top clienti, top numeri chiamati
 
 ### API Endpoints
+
+Pagine HTML (richiedono login via sessione):
 - `GET /` - Pagina principale
+- `GET /login` / `POST /login` - Form di login
+- `GET /logout` - Logout
+
+API JSON (richiedono login, restituiscono 401 se non autenticati):
 - `GET /search` - Ricerca chiamate con filtri
-- `GET /statistics` - Statistiche completi
+- `GET /statistics` - Statistiche con filtri di periodo
 - `GET /calls/<id>` - Dettagli di una chiamata specifica
-- `GET /api/months` - Mesi disponibili
+- `GET /api/months` - Mesi disponibili (ultimi 24)
+- `GET /api/daily` - Chiamate di oggi (timezone configurato)
+- `GET /api/daily/<year>` - Chiamate di un anno
+- `GET /api/daily/<year>/<month>` - Chiamate di un mese
 - `GET /api/daily/<year>/<month>/<day>` - Chiamate di un giorno
-- `GET /api/health` - Health check
+- `GET /api/stats/hourly` - Distribuzione oraria (con `start_date` / `end_date`)
+- `GET /api/settings` - Legge timezone e `timestamp_mode`
+- `POST /api/settings` - Aggiorna timezone e/o `timestamp_mode`
+
+Endpoint pubblico:
+- `GET /api/health` - Health check (non richiede autenticazione)
 
 ### Filtri di Ricerca
 - Direzione (Inbound/Outbound)
@@ -196,35 +218,44 @@ Il codice C# è stato esaminato scrupolosamente:
    - ✅ Avvia server TCP su port 3000
    - ✅ Usa EventLog per log
 
-## 🔒 Sicurezza
+## 🔒 Autenticazione
 
-- Attualmente **NESSUNA autenticazione** configurata
-- Il database SQLite è accessibile direttamente
-- RESTO IN ATTESA DI INSTRUCTIONS PER GESTIRE CREDENZIALI: l'utente ha detto "al momento non serve user e password per accedere alla interfaccia web". Se cambia idea in futuro, aggiungo:
+L'interfaccia web e tutte le API JSON (eccetto `/api/health`) richiedono login via sessione Flask. Le credenziali sono lette da variabili d'ambiente / file `.env`:
 
-### Pronto per autenticazione nel futuro:
-```python
-# Auth example (da implementare quando richiesto)
-from functools import wraps
-from flask import session, redirect, url_for
-
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'logged_in' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
+```bash
+# .env (NON committare)
+SMDR_USERNAME=admin
+SMDR_PASSWORD=cambiami
+SMDR_SECRET_KEY=stringa-casuale-lunga
 ```
+
+Default se non impostate: `admin` / `smdr2024` (da cambiare in produzione). Il `SMDR_SECRET_KEY` viene generato casualmente a ogni riavvio se non specificato — questo invalida le sessioni esistenti, quindi vale la pena fissarlo.
+
+I decoratori applicati:
+- `@login_required` sulle pagine HTML → redirect a `/login`
+- `@api_login_required` sulle API JSON → risposta 401
+
+## 🌍 Timezone e Timestamp
+
+I timestamp ricevuti dal PBX vengono salvati nel DB così come arrivano (naive). L'interpretazione e la conversione per il frontend sono guidate da due chiavi nella tabella `app_settings`, modificabili a runtime tramite `POST /api/settings`:
+
+- `timezone` — nome IANA (default `Europe/Rome`), risolto via `zoneinfo.ZoneInfo`. Gestisce DST automaticamente.
+- `timestamp_mode` — `utc` (default) se il PBX invia timestamp UTC, `local` se invia già nella timezone configurata.
+
+`localize_timestamp()` in `database.py` è l'unico punto che converte i timestamp grezzi in stringhe ISO 8601 timezone-aware per le risposte API. Le route Flask usano `_localize_call` / `_localize_calls` prima di restituire JSON.
 
 ## 📚 Dipendenze
 
 ```
 Flask==3.0.0
 Werkzeug==3.0.1
+python-dotenv==1.0.1
+Flask-Login==0.6.3
 ```
 
-Tutto in un singolo file requirements.txt per facilità, basato sulla versione Python 3.11.
+> Nota: `Flask-Login` è elencato ma non attualmente usato — l'auth è implementata con sessioni Flask "vanilla". Mantenuto per eventuale migrazione futura.
+
+Basato su Python 3.11+ (le immagini Docker usano `python:3.14-slim`).
 
 ## 🐛 Troubleshooting
 
