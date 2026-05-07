@@ -1,5 +1,6 @@
 """Flask application for SMDR web interface"""
 import os
+from datetime import datetime
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -13,7 +14,12 @@ from database import (
     count_calls,
     update_smdr_record,
     get_calls_by_date_period,
-    get_hourly_stats
+    get_hourly_stats,
+    get_setting,
+    set_setting,
+    get_app_timezone,
+    localize_timestamp,
+    get_tz_info,
 )
 
 # Load environment variables from .env
@@ -29,6 +35,20 @@ SMDR_PASSWORD = os.environ.get('SMDR_PASSWORD', 'smdr2024')
 
 # Initialize database on startup
 init_database()
+
+
+# ── Timezone helper for API responses ──────────────────────
+
+def _localize_call(call_dict):
+    """Localize the call_start timestamp in a call dict to the configured timezone."""
+    if call_dict.get('call_start'):
+        call_dict['call_start'] = localize_timestamp(call_dict['call_start'])
+    return call_dict
+
+
+def _localize_calls(calls_list):
+    """Localize call_start timestamps for a list of call dicts."""
+    return [_localize_call(c) for c in calls_list]
 
 
 # ── Auth helpers ────────────────────────────────────────────
@@ -91,6 +111,37 @@ def index():
     return render_template('index.html')
 
 
+# ── Settings API ────────────────────────────────────────────
+
+@app.route('/api/settings', methods=['GET'])
+@api_login_required
+def get_settings():
+    """Get current application settings including timezone info."""
+    tz_info = get_tz_info()
+    return jsonify(tz_info)
+
+
+@app.route('/api/settings', methods=['POST'])
+@api_login_required
+def update_settings():
+    """Update application settings."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    # Validate and update timezone
+    if 'timezone' in data:
+        tz_name = data['timezone']
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(tz_name)  # Validate timezone name
+            set_setting('timezone', tz_name)
+        except Exception:
+            return jsonify({'error': f'Invalid timezone: {tz_name}'}), 400
+
+    return jsonify(get_tz_info())
+
+
 # ── Protected API ───────────────────────────────────────────
 
 @app.route('/search')
@@ -114,7 +165,7 @@ def search():
     total_count = count_calls()
 
     return jsonify({
-        'calls': [dict(row) for row in calls],
+        'calls': _localize_calls([dict(row) for row in calls]),
         'total': total_count,
         'limit': limit,
         'offset': offset
@@ -148,6 +199,10 @@ def statistics():
             filters['end_date'] = end_date
 
     stats = get_call_stats(filters)
+
+    # Add timezone info to statistics response
+    stats['tz_info'] = get_tz_info()
+
     return jsonify(stats)
 
 
@@ -157,7 +212,7 @@ def get_call(call_id):
     """Get details of a specific call"""
     call = get_call_by_id(call_id)
     if call:
-        return jsonify(dict(call))
+        return jsonify(_localize_call(dict(call)))
     return jsonify({'error': 'Call not found'}), 404
 
 
@@ -169,6 +224,7 @@ def get_hourly_stats_route():
     end_date = request.args.get('end_date')
     
     stats = get_hourly_stats(start_date=start_date, end_date=end_date)
+    stats['tz_info'] = get_tz_info()
     return jsonify(stats)
 
 
@@ -218,7 +274,7 @@ def get_daily_calls(year, month, day):
         conn.close()
 
         return jsonify({
-            'calls': [dict(row) for row in calls],
+            'calls': _localize_calls([dict(row) for row in calls]),
             'total_duration_seconds': result['total'] or 0,
             'total_ring_seconds': result['ring_total'] or 0
         })
@@ -243,7 +299,7 @@ def get_monthly_calls(year, month):
         conn.close()
 
         return jsonify({
-            'calls': [dict(row) for row in calls],
+            'calls': _localize_calls([dict(row) for row in calls]),
             'total_duration_seconds': result['total'] or 0,
             'total_ring_seconds': result['ring_total'] or 0
         })
@@ -268,7 +324,7 @@ def get_yearly_calls(year):
         conn.close()
 
         return jsonify({
-            'calls': [dict(row) for row in calls],
+            'calls': _localize_calls([dict(row) for row in calls]),
             'total_duration_seconds': result['total'] or 0,
             'total_ring_seconds': result['ring_total'] or 0
         })
@@ -279,9 +335,9 @@ def get_yearly_calls(year):
 @app.route('/api/daily')
 @api_login_required
 def get_today_calls():
-    """Get calls for today"""
-    from datetime import datetime
-    today = datetime.now().strftime('%Y-%m-%d')
+    """Get calls for today in the configured timezone"""
+    tz = get_app_timezone()
+    today = datetime.now(tz).strftime('%Y-%m-%d')
     calls = get_calls_by_date_period(None, None, today)
 
     conn = get_db_connection()
@@ -294,7 +350,7 @@ def get_today_calls():
     conn.close()
 
     return jsonify({
-        'calls': [dict(row) for row in calls],
+        'calls': _localize_calls([dict(row) for row in calls]),
         'total_duration_seconds': result['total'] or 0,
         'total_ring_seconds': result['ring_total'] or 0,
         'date': today
@@ -304,9 +360,7 @@ def get_today_calls():
 @app.route('/api/health')
 def health_check():
     """Health check endpoint (unauthenticated)"""
-    conn = get_db_connection()
     count = count_calls()
-    conn.close()
     return jsonify({
         'status': 'ok',
         'database': 'connected',

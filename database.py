@@ -1,7 +1,8 @@
 """Database module for SMDR application using SQLite3"""
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'smdr.db')
 
@@ -19,6 +20,19 @@ def init_database():
     """Initialize the database with tables"""
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Create settings table for app configuration
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    # Insert default timezone if not exists
+    cursor.execute('''
+        INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)
+    ''', ('timezone', 'Europe/Rome'))
 
     # Create smdr_calls table
     cursor.execute('''
@@ -423,3 +437,120 @@ def update_smdr_record(call_id, updates):
     conn.commit()
     conn.close()
     return cursor.rowcount > 0
+
+
+# ── Settings helpers ──────────────────────────────────────────
+
+def get_setting(key, default=None):
+    """Get a setting value from app_settings table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT value FROM app_settings WHERE key = ?', (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row['value']
+    return default
+
+
+def set_setting(key, value):
+    """Set a setting value in app_settings table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO app_settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    ''', (key, value))
+    conn.commit()
+    conn.close()
+    return value
+
+
+def get_app_timezone():
+    """Get the configured application timezone as a ZoneInfo object."""
+    tz_name = get_setting('timezone', 'Europe/Rome')
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return ZoneInfo('Europe/Rome')
+
+
+def localize_timestamp(dt_str, tz=None):
+    """
+    Convert a naive timestamp string to the configured timezone.
+    
+    Assumes the stored timestamp is a naive datetime in the configured timezone.
+    Returns the timestamp with UTC offset appended (ISO 8601 format).
+    This allows the frontend to correctly interpret and display the time.
+    
+    DST is handled automatically via the ZoneInfo database.
+    """
+    if not dt_str:
+        return dt_str
+    
+    if tz is None:
+        tz = get_app_timezone()
+    
+    # Parse the stored timestamp
+    # Handle both '2024-05-07T14:30:00' and '2024-05-07 14:30:00' formats
+    ts = dt_str.strip()
+    
+    # If already timezone-aware (ends with +XX:XX or Z), return as-is
+    if ts.endswith('Z') or (len(ts) > 5 and ts[-6] in ('+', '-') and ts[-3] == ':'):
+        return ts
+    
+    try:
+        if 'T' in ts:
+            dt_naive = datetime.fromisoformat(ts)
+        else:
+            # Try common formats
+            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M:%S'):
+                try:
+                    dt_naive = datetime.strptime(ts, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                # Last resort
+                dt_naive = datetime.fromisoformat(ts)
+        
+        # Localize the naive datetime to the configured timezone
+        # This automatically handles DST!
+        dt_aware = dt_naive.replace(tzinfo=tz)
+        
+        # Return as ISO 8601 with UTC offset
+        return dt_aware.isoformat()
+    except Exception:
+        # If parsing fails, return original string
+        return dt_str
+
+
+def get_tz_info():
+    """
+    Get timezone info for the frontend: name, UTC offset, DST status.
+    Returns dict with timezone details.
+    """
+    tz = get_app_timezone()
+    tz_name = get_setting('timezone', 'Europe/Rome')
+    now = datetime.now(tz)
+    
+    # Get UTC offset
+    utc_offset = now.strftime('%z')  # e.g. '+0200'
+    # Format as '+02:00'
+    offset_hours = utc_offset[:-2]
+    offset_minutes = utc_offset[-2:]
+    offset_formatted = f'{offset_hours[:3]}:{offset_minutes}'
+    if len(offset_hours) == 3:  # +02 => +02:00
+        offset_formatted = f'+0{offset_hours[1:]}:{offset_minutes}'
+    formatted_offset = f'{utc_offset[:3]}:{utc_offset[3:]}'
+    
+    # Check if DST is active
+    dst_active = bool(now.dst())
+    
+    return {
+        'timezone': tz_name,
+        'utc_offset': formatted_offset,
+        'utc_offset_minutes': int(now.utcoffset().total_seconds() / 60),
+        'dst_active': dst_active,
+        'current_time': now.isoformat(),
+    }
