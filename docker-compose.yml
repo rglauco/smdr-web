@@ -13,6 +13,8 @@ services:
     volumes:
       # Mount data volume for SQLite database
       - smdr-data:/app/data
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
