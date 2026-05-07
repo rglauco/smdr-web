@@ -1,12 +1,14 @@
 """Flask application for SMDR web interface"""
+import csv
 import hmac
+import io
 import os
 import sys
 from datetime import datetime, timedelta
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, session, flash
 from database import (
     init_database,
     get_db_connection,
@@ -23,6 +25,13 @@ from database import (
     localize_timestamp,
     get_tz_info,
     get_timestamp_mode,
+    get_number_categories,
+    get_duration_histogram,
+    get_hour_dow_heatmap,
+    get_dow_breakdown,
+    get_anomalies,
+    get_period_comparison,
+    iter_calls_for_export,
 )
 
 # Load environment variables from .env
@@ -104,6 +113,31 @@ def api_login_required(f):
             return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Filter parsing helper ──────────────────────────────────
+
+def _parse_filters_from_args():
+    """
+    Build the standard filters dict from request.args. Used by all
+    statistics endpoints so they accept the same query string shape.
+    """
+    filters = {}
+    for key in ('call_direction', 'is_internal', 'dialed_number', 'caller', 'account'):
+        val = request.args.get(key)
+        if val:
+            filters[key] = val
+    start_date = request.args.get('start_date')
+    if start_date:
+        filters['start_date'] = start_date
+    end_date = request.args.get('end_date')
+    if end_date:
+        # End-of-day inclusive when only a date was provided
+        if len(end_date) == 10:
+            filters['end_date'] = end_date + ' 23:59:59'
+        else:
+            filters['end_date'] = end_date
+    return filters
 
 
 # ── Auth routes ─────────────────────────────────────────────
@@ -409,6 +443,103 @@ def get_today_calls():
         'total_ring_seconds': result['ring_total'] or 0,
         'date': today
     })
+
+
+@app.route('/api/stats/heatmap')
+@api_login_required
+def get_heatmap_route():
+    """Day-of-week × hour heatmap (7×24)."""
+    return jsonify(get_hour_dow_heatmap(_parse_filters_from_args()))
+
+
+@app.route('/api/stats/duration-histogram')
+@api_login_required
+def get_duration_histogram_route():
+    """Bucketed call duration distribution."""
+    return jsonify({'buckets': get_duration_histogram(_parse_filters_from_args())})
+
+
+@app.route('/api/stats/number-categories')
+@api_login_required
+def get_number_categories_route():
+    """Italian-aware number categorization. ?field=dialed_number|caller"""
+    field = request.args.get('field', 'dialed_number')
+    return jsonify({
+        'field': field if field in ('dialed_number', 'caller') else 'dialed_number',
+        'categories': get_number_categories(_parse_filters_from_args(), field=field),
+    })
+
+
+@app.route('/api/stats/dow')
+@api_login_required
+def get_dow_route():
+    """Day-of-week breakdown (Mon-first) with answer rate."""
+    return jsonify({'days': get_dow_breakdown(_parse_filters_from_args())})
+
+
+@app.route('/api/stats/anomalies')
+@api_login_required
+def get_anomalies_route():
+    """Anomalous days (|z-score| >= threshold) over the last N days."""
+    try:
+        lookback = int(request.args.get('lookback_days', 60))
+    except (TypeError, ValueError):
+        lookback = 60
+    try:
+        z_threshold = float(request.args.get('z_threshold', 2.0))
+    except (TypeError, ValueError):
+        z_threshold = 2.0
+    lookback = max(7, min(lookback, 365))
+    z_threshold = max(1.0, min(z_threshold, 5.0))
+    return jsonify(get_anomalies(_parse_filters_from_args(), lookback_days=lookback, z_threshold=z_threshold))
+
+
+@app.route('/api/stats/compare')
+@api_login_required
+def get_compare_route():
+    """Compare current period vs previous period of equal length."""
+    result = get_period_comparison(_parse_filters_from_args())
+    if result is None:
+        return jsonify({'error': 'start_date e end_date richiesti per il confronto'}), 400
+    return jsonify(result)
+
+
+@app.route('/api/export/calls.csv')
+@api_login_required
+def export_calls_csv():
+    """Stream the filtered call list as CSV."""
+    filters = _parse_filters_from_args()
+    tz_mode = get_timestamp_mode()
+
+    columns = [
+        'id', 'call_start', 'call_direction', 'caller', 'dialed_number',
+        'account', 'connected_time', 'ring_time',
+        'party1_name', 'party2_name', 'is_internal',
+    ]
+
+    def generate():
+        # UTF-8 BOM so Excel opens it as UTF-8 by default
+        buf = io.StringIO()
+        buf.write('﻿')
+        writer = csv.writer(buf, delimiter=',', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(columns)
+        yield buf.getvalue()
+
+        for row in iter_calls_for_export(filters):
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter=',', quoting=csv.QUOTE_MINIMAL)
+            row_localized = dict(row)
+            if row_localized.get('call_start'):
+                row_localized['call_start'] = localize_timestamp(row_localized['call_start'], mode=tz_mode)
+            writer.writerow([row_localized.get(c, '') for c in columns])
+            yield buf.getvalue()
+
+    filename = f'smdr_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+    return Response(
+        generate(),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @app.route('/api/health')

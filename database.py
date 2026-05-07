@@ -325,6 +325,31 @@ def get_call_stats(filters=None):
     rows = run(f'SELECT dialed_number, COUNT(*) as count FROM smdr_calls {where} GROUP BY dialed_number ORDER BY count DESC LIMIT 10', params or None)
     stats['top_dialed'] = [{"dialed_number": r['dialed_number'] or 'Unknown', "count": r['count']} for r in rows if r['dialed_number']]
 
+    # ── Operational KPIs: answer rate, ACD, ASA, Service Level ─
+    sl_threshold = 20  # seconds — industry default for Service Level
+    row = run(f"""
+        SELECT
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            SUM(CASE WHEN connected_time = 0 THEN 1 ELSE 0 END) AS abandoned,
+            AVG(CASE WHEN connected_time > 0 THEN connected_time END) AS acd,
+            AVG(CASE WHEN connected_time > 0 THEN ring_time END) AS asa,
+            SUM(CASE WHEN connected_time > 0 AND ring_time <= {sl_threshold} THEN 1 ELSE 0 END) AS answered_in_sl
+        FROM smdr_calls {where}
+    """, params or None)
+    result = row[0]
+    total = stats['total_calls']
+    answered = result['answered'] or 0
+    abandoned = result['abandoned'] or 0
+    answered_in_sl = result['answered_in_sl'] or 0
+    stats['answered'] = answered
+    stats['abandoned'] = abandoned
+    stats['answer_rate'] = round(answered / total, 4) if total else 0
+    stats['abandonment_rate'] = round(abandoned / total, 4) if total else 0
+    stats['acd_seconds'] = round(result['acd'] or 0, 1)
+    stats['asa_seconds'] = round(result['asa'] or 0, 1)
+    stats['service_level'] = round(answered_in_sl / answered, 4) if answered else 0
+    stats['service_level_threshold_seconds'] = sl_threshold
+
     # ── Period grouping: by_day, by_week, by_month ───────────
     # By day (last 60 days max)
     rows = run(f"""SELECT strftime('%Y-%m-%d', call_start) as day, COUNT(*) as count
@@ -418,6 +443,300 @@ def get_hourly_stats(start_date=None, end_date=None):
     return {
         'hours': [{'hour': h, 'count': hourly_data[h]} for h in sorted(hourly_data.keys())]
     }
+
+
+# ── Italian-aware number classification ──────────────────────
+# Uses GLOB (case-sensitive) on string columns. Order matters: more
+# specific patterns first. Falls through to 'Altro' for anything unmatched.
+_NUMBER_CLASSIFICATION = """
+    CASE
+        WHEN {col} IS NULL OR {col} = '' THEN 'Sconosciuto'
+        WHEN length({col}) <= 4 THEN 'Interno'
+        WHEN {col} GLOB '11[0-9]' THEN 'Servizio'
+        WHEN {col} GLOB '+*' OR {col} GLOB '00*' THEN 'Internazionale'
+        WHEN {col} GLOB '800*' OR {col} GLOB '803*' THEN 'Verde'
+        WHEN {col} GLOB '199*' OR {col} GLOB '899*' OR {col} GLOB '144*' OR {col} GLOB '166*' OR {col} GLOB '892*' THEN 'Premium'
+        WHEN {col} GLOB '03[3-9]*' AND length({col}) BETWEEN 10 AND 12 THEN 'Mobile'
+        WHEN {col} GLOB '3[3-9]*' AND length({col}) BETWEEN 9 AND 11 THEN 'Mobile'
+        WHEN {col} GLOB '0*' THEN 'Fisso'
+        ELSE 'Altro'
+    END
+"""
+
+
+def get_number_categories(filters=None, field='dialed_number'):
+    """
+    Categorize numbers (Italian-aware) and return counts + answered + total seconds.
+    field: 'dialed_number' (default) or 'caller'.
+    """
+    if field not in ('dialed_number', 'caller'):
+        field = 'dialed_number'
+
+    where, params = _build_where_clause(filters)
+    classification = _NUMBER_CLASSIFICATION.format(col=field)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            {classification} AS category,
+            COUNT(*) AS count,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            SUM(connected_time) AS total_seconds
+        FROM smdr_calls {where}
+        GROUP BY category
+        ORDER BY count DESC
+    """, params or [])
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            'category': r['category'],
+            'count': r['count'],
+            'answered': r['answered'] or 0,
+            'total_seconds': r['total_seconds'] or 0,
+        }
+        for r in rows
+    ]
+
+
+def get_duration_histogram(filters=None):
+    """Return bucketed distribution of connected_time."""
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            CASE
+                WHEN connected_time = 0 THEN '0_no_answer'
+                WHEN connected_time <= 10 THEN '1_0_10s'
+                WHEN connected_time <= 30 THEN '2_10_30s'
+                WHEN connected_time <= 60 THEN '3_30_60s'
+                WHEN connected_time <= 300 THEN '4_1_5m'
+                WHEN connected_time <= 900 THEN '5_5_15m'
+                WHEN connected_time <= 1800 THEN '6_15_30m'
+                ELSE '7_30m_plus'
+            END AS bucket,
+            COUNT(*) AS count
+        FROM smdr_calls {where}
+        GROUP BY bucket
+    """, params or [])
+    rows = cursor.fetchall()
+    conn.close()
+
+    LABELS = [
+        ('0_no_answer', 'Non risposte'),
+        ('1_0_10s', '0-10s'),
+        ('2_10_30s', '10-30s'),
+        ('3_30_60s', '30-60s'),
+        ('4_1_5m', '1-5min'),
+        ('5_5_15m', '5-15min'),
+        ('6_15_30m', '15-30min'),
+        ('7_30m_plus', '>30min'),
+    ]
+    counts = {key: 0 for key, _ in LABELS}
+    for r in rows:
+        if r['bucket'] in counts:
+            counts[r['bucket']] = r['count']
+    return [{'bucket': label, 'count': counts[key]} for key, label in LABELS]
+
+
+def get_hour_dow_heatmap(filters=None):
+    """7×24 heatmap of calls by day-of-week × hour. Monday-first."""
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            CAST(strftime('%w', call_start) AS INTEGER) AS dow,
+            CAST(strftime('%H', call_start) AS INTEGER) AS hour,
+            COUNT(*) AS count
+        FROM smdr_calls {where}
+        GROUP BY dow, hour
+    """, params or [])
+    rows = cursor.fetchall()
+    conn.close()
+
+    # SQLite %w: 0=Sunday..6=Saturday. Remap to 0=Monday..6=Sunday.
+    grid = [[0] * 24 for _ in range(7)]
+    max_count = 0
+    for r in rows:
+        eu_dow = (r['dow'] + 6) % 7
+        grid[eu_dow][r['hour']] = r['count']
+        if r['count'] > max_count:
+            max_count = r['count']
+
+    return {
+        'days': ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'],
+        'hours': [f'{h:02d}' for h in range(24)],
+        'grid': grid,
+        'max': max_count,
+    }
+
+
+def get_dow_breakdown(filters=None):
+    """Day-of-week breakdown with per-day answer rate."""
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            CAST(strftime('%w', call_start) AS INTEGER) AS dow,
+            COUNT(*) AS total,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered
+        FROM smdr_calls {where}
+        GROUP BY dow
+    """, params or [])
+    rows = cursor.fetchall()
+    conn.close()
+
+    DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
+    by_dow = [{'day': d, 'total': 0, 'answered': 0, 'answer_rate': 0.0} for d in DAYS]
+
+    for r in rows:
+        eu_dow = (r['dow'] + 6) % 7
+        total = r['total']
+        answered = r['answered'] or 0
+        by_dow[eu_dow]['total'] = total
+        by_dow[eu_dow]['answered'] = answered
+        by_dow[eu_dow]['answer_rate'] = round(answered / total, 4) if total else 0.0
+
+    return by_dow
+
+
+def get_anomalies(filters=None, lookback_days=60, z_threshold=2.0):
+    """
+    Detect anomalous days based on z-score of daily call count over the
+    last `lookback_days` days within the filter scope. Returns days where
+    |z| >= z_threshold.
+    """
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT strftime('%Y-%m-%d', call_start) AS day, COUNT(*) AS count
+        FROM smdr_calls {where}
+        GROUP BY day
+        ORDER BY day DESC
+        LIMIT ?
+    """, list(params) + [lookback_days])
+    rows = cursor.fetchall()
+    conn.close()
+
+    if len(rows) < 5:
+        return {'baseline': None, 'anomalies': [], 'sample_days': len(rows)}
+
+    counts = [r['count'] for r in rows]
+    n = len(counts)
+    mean = sum(counts) / n
+    var = sum((c - mean) ** 2 for c in counts) / n
+    stddev = var ** 0.5
+
+    anomalies = []
+    if stddev > 0:
+        for r in rows:
+            z = (r['count'] - mean) / stddev
+            if abs(z) >= z_threshold:
+                anomalies.append({
+                    'day': r['day'],
+                    'count': r['count'],
+                    'z_score': round(z, 2),
+                    'severity': 'high' if z > 0 else 'low',
+                })
+
+    return {
+        'baseline': {'mean': round(mean, 1), 'stddev': round(stddev, 1)},
+        'anomalies': anomalies,
+        'sample_days': n,
+        'z_threshold': z_threshold,
+    }
+
+
+def _summary_kpis(filters):
+    """Compact KPI block used by period comparison."""
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN connected_time > 0 THEN 1 ELSE 0 END) AS answered,
+            AVG(CASE WHEN connected_time > 0 THEN connected_time END) AS acd,
+            AVG(CASE WHEN connected_time > 0 THEN ring_time END) AS asa,
+            SUM(connected_time) AS total_seconds
+        FROM smdr_calls {where}
+    """, params or [])
+    row = cursor.fetchone()
+    conn.close()
+    total = row['total'] or 0
+    answered = row['answered'] or 0
+    return {
+        'total': total,
+        'answered': answered,
+        'answer_rate': round(answered / total, 4) if total else 0,
+        'acd_seconds': round(row['acd'] or 0, 1),
+        'asa_seconds': round(row['asa'] or 0, 1),
+        'total_seconds': row['total_seconds'] or 0,
+    }
+
+
+def get_period_comparison(filters):
+    """
+    Compare current filtered period against the same-length previous
+    period. Returns None if start_date/end_date aren't both set.
+    """
+    if not filters or not filters.get('start_date') or not filters.get('end_date'):
+        return None
+
+    try:
+        start = _parse_timestamp(filters['start_date'])
+        end = _parse_timestamp(filters['end_date'])
+    except Exception:
+        return None
+
+    duration = end - start
+    if duration.total_seconds() <= 0:
+        return None
+
+    prev_filters = dict(filters)
+    prev_filters['start_date'] = (start - duration).strftime('%Y-%m-%d %H:%M:%S')
+    prev_filters['end_date'] = start.strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        'current': _summary_kpis(filters),
+        'previous': _summary_kpis(prev_filters),
+        'previous_range': {
+            'start_date': prev_filters['start_date'],
+            'end_date': prev_filters['end_date'],
+        },
+    }
+
+
+def iter_calls_for_export(filters=None):
+    """
+    Generator that yields call rows (as dicts) for streaming CSV export.
+    Uses fetchmany to avoid loading the whole result set into memory.
+    """
+    where, params = _build_where_clause(filters)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT
+            id, call_start, call_direction, caller, dialed_number, account,
+            connected_time, ring_time, party1_name, party2_name, is_internal
+        FROM smdr_calls {where}
+        ORDER BY call_start DESC
+    """, params or [])
+    try:
+        while True:
+            rows = cursor.fetchmany(500)
+            if not rows:
+                break
+            for r in rows:
+                yield dict(r)
+    finally:
+        conn.close()
 
 
 def get_call_by_id(call_id):

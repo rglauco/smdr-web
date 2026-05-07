@@ -164,12 +164,26 @@
         /* ── Stats row ──────────────────────────────────── */
         .stats-row {
             display: grid;
-            grid-template-columns: repeat(6, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 1rem;
             margin-top: 1.25rem;
         }
-        @media (max-width: 1100px) { .stats-row { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 600px)  { .stats-row { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 1100px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 600px)  { .stats-row { grid-template-columns: 1fr; } }
+        .stat-delta {
+            display: inline-flex;
+            align-items: center;
+            gap: .15rem;
+            font-size: .7rem;
+            font-weight: 600;
+            padding: .15rem .4rem;
+            border-radius: 999px;
+            margin-left: .4rem;
+            vertical-align: middle;
+        }
+        .stat-delta.up   { background: rgba(0,184,148,.12); color: #00b894; }
+        .stat-delta.down { background: rgba(214,48,49,.12); color: #d63031; }
+        .stat-delta.flat { background: rgba(99,110,114,.12); color: #636e72; }
 
         .stat-card {
             background: var(--surface);
@@ -583,6 +597,95 @@
         }
         .empty-state svg { width: 48px; height: 48px; margin-bottom: .75rem; opacity: .4; }
 
+        /* ── Heatmap (7×24) ─────────────────────────────── */
+        .heatmap-wrap { overflow-x: auto; padding: .25rem 0; }
+        .heatmap-table {
+            border-collapse: separate;
+            border-spacing: 2px;
+            font-size: .68rem;
+            color: var(--text-secondary);
+        }
+        .heatmap-table th {
+            font-weight: 600;
+            padding: 2px 4px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+        .heatmap-table td.dow-label {
+            font-weight: 600;
+            padding: 0 .5rem 0 0;
+            text-align: right;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .heatmap-table td.cell {
+            width: 22px;
+            height: 22px;
+            border-radius: 3px;
+            background: #f0f2f5;
+            cursor: default;
+            transition: transform .12s, box-shadow .12s;
+        }
+        .heatmap-table td.cell[data-count]:not([data-count="0"]) { cursor: pointer; }
+        .heatmap-table td.cell:hover { transform: scale(1.18); box-shadow: 0 0 0 2px var(--primary); }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: .4rem;
+            font-size: .7rem;
+            color: var(--text-muted);
+            margin-top: .4rem;
+        }
+        .heatmap-legend-bar {
+            display: flex;
+            gap: 1px;
+        }
+        .heatmap-legend-bar span {
+            width: 14px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        /* ── Anomaly badge ──────────────────────────────── */
+        .anomaly-badge {
+            display: none;
+            align-items: center;
+            gap: .3rem;
+            padding: .25rem .55rem;
+            border-radius: 999px;
+            background: rgba(214,48,49,.18);
+            color: #fff;
+            font-size: .72rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid rgba(214,48,49,.4);
+        }
+        .anomaly-badge.visible { display: inline-flex; }
+        .anomaly-badge:hover { background: rgba(214,48,49,.28); }
+
+        /* ── Export button ──────────────────────────────── */
+        .btn-export {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            padding: .4rem .8rem;
+            background: var(--bg);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: .8rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all .15s;
+        }
+        .btn-export:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(0,184,148,.06);
+        }
+        .btn-export svg { width: 14px; height: 14px; }
+
         /* ── Fade-in animation ────────────────────────────── */
         @keyframes fadeUp {
             from { opacity: 0; transform: translateY(12px); }
@@ -608,6 +711,10 @@
     </a>
     <div class="navbar-meta">
         <span id="navTotal">—</span>
+        <span class="anomaly-badge" id="anomalyBadge" onclick="openAnomalyModal()" title="Click per dettagli">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span id="anomalyBadgeCount">0</span> anomalie
+        </span>
         <span class="tz-badge" id="tzBadge" onclick="openTzModal()" title="Fai clic per cambiare fuso orario">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             <span id="tzBadgeText">...</span>
@@ -671,7 +778,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
             </div>
             <div class="stat-label">Totale Chiamate</div>
-            <div class="stat-value" id="totalCalls">—</div>
+            <div class="stat-value" id="totalCalls">—<span class="stat-delta" id="deltaTotal" style="display:none"></span></div>
         </div>
         <div class="stat-card fade-up delay-2">
             <div class="stat-icon in">
@@ -688,25 +795,43 @@
             <div class="stat-value" id="outboundCalls">—</div>
         </div>
         <div class="stat-card fade-up delay-3">
-            <div class="stat-icon int">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            </div>
-            <div class="stat-label">Interne</div>
-            <div class="stat-value" id="internalCalls">—</div>
-        </div>
-        <div class="stat-card fade-up delay-3">
-            <div class="stat-icon ext">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-            </div>
-            <div class="stat-label">Esterne</div>
-            <div class="stat-value" id="externalCalls">—</div>
-        </div>
-        <div class="stat-card fade-up delay-4">
             <div class="stat-icon dur">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
             <div class="stat-label">Durata Totale (ore)</div>
             <div class="stat-value" id="totalDuration">—</div>
+        </div>
+        <div class="stat-card fade-up delay-3">
+            <div class="stat-icon in">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 4 12 14.01 9 11.01"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            </div>
+            <div class="stat-label">Tasso di Risposta</div>
+            <div class="stat-value" id="answerRate">—<span class="stat-delta" id="deltaAR" style="display:none"></span></div>
+            <div class="stat-label" style="margin-top:.25rem;font-size:.7rem;text-transform:none;letter-spacing:0;font-weight:500" id="answerRateDetail">— risposte</div>
+        </div>
+        <div class="stat-card fade-up delay-3">
+            <div class="stat-icon int">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <div class="stat-label">ACD — Durata media</div>
+            <div class="stat-value" id="acd">—<span class="stat-delta" id="deltaACD" style="display:none"></span></div>
+            <div class="stat-label" style="margin-top:.25rem;font-size:.7rem;text-transform:none;letter-spacing:0;font-weight:500">solo chiamate risposte</div>
+        </div>
+        <div class="stat-card fade-up delay-4">
+            <div class="stat-icon ext">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 6 12 12 16 14"/><circle cx="12" cy="12" r="10"/></svg>
+            </div>
+            <div class="stat-label">ASA — Tempo risposta</div>
+            <div class="stat-value" id="asa">—<span class="stat-delta" id="deltaASA" style="display:none"></span></div>
+            <div class="stat-label" style="margin-top:.25rem;font-size:.7rem;text-transform:none;letter-spacing:0;font-weight:500">average speed of answer</div>
+        </div>
+        <div class="stat-card fade-up delay-4">
+            <div class="stat-icon out">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            </div>
+            <div class="stat-label">Service Level</div>
+            <div class="stat-value" id="serviceLevel">—</div>
+            <div class="stat-label" style="margin-top:.25rem;font-size:.7rem;text-transform:none;letter-spacing:0;font-weight:500" id="slDetail">% rispose entro 20s</div>
         </div>
     </div>
 
@@ -745,6 +870,66 @@
                 <span class="chart-sub-label" id="dailyTrendSubLabel">numero chiamate per giorno</span>
             </div>
             <canvas id="dailyTrendChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ═══ Heatmap settimanale ═══ -->
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Heatmap Settimanale (giorno × ora)</div>
+    </div>
+    <div class="chart-card fade-up delay-4" style="margin-bottom:1.25rem">
+        <div class="chart-title">
+            <span>Intensità chiamate per giorno della settimana e ora</span>
+            <span class="chart-sub-label" id="heatmapSubLabel">click su una cella per filtrare</span>
+        </div>
+        <div class="heatmap-wrap">
+            <div id="heatmapContainer"></div>
+        </div>
+        <div class="heatmap-legend">
+            <span>Meno</span>
+            <div class="heatmap-legend-bar" id="heatmapLegend"></div>
+            <span>Più</span>
+        </div>
+    </div>
+
+    <!-- ═══ Categorie numero & Distribuzione durate ═══ -->
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Tipologia Numeri &amp; Distribuzione Durate</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Categoria Numeri Chiamati</span>
+                <span class="chart-sub-label">Mobile / Fisso / Intl / Verde / Premium / Interno</span>
+            </div>
+            <canvas id="numberCategoriesDialedChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Categoria Numeri Chiamanti</span>
+                <span class="chart-sub-label">classificazione provenienza</span>
+            </div>
+            <canvas id="numberCategoriesCallerChart"></canvas>
+        </div>
+    </div>
+
+    <div style="margin-top:1.25rem">
+        <div class="section-heading">Distribuzione Durate &amp; Giorno della Settimana</div>
+    </div>
+    <div class="charts-grid">
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Istogramma Durate</span>
+                <span class="chart-sub-label">in bucket; "Non risposte" = nessuna connessione</span>
+            </div>
+            <canvas id="durationHistogramChart"></canvas>
+        </div>
+        <div class="chart-card fade-up delay-4">
+            <div class="chart-title">
+                <span>Per Giorno della Settimana</span>
+                <span class="chart-sub-label">conteggio + tasso di risposta</span>
+            </div>
+            <canvas id="dowChart"></canvas>
         </div>
     </div>
 
@@ -818,7 +1003,13 @@
     <div class="results-panel" id="resultsContainer" style="display:none; margin-top:1.5rem;">
         <div class="results-header">
             <h3>Risultati</h3>
-            <span class="results-count" id="resultsCount"></span>
+            <div style="display:flex;align-items:center;gap:1rem">
+                <span class="results-count" id="resultsCount"></span>
+                <a href="#" class="btn-export" id="exportCsvBtn" onclick="downloadCsv(event)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Esporta CSV
+                </a>
+            </div>
         </div>
         <div class="table-wrap">
             <table>
@@ -908,6 +1099,23 @@
     </div>
 </div>
 
+<!-- Anomaly Modal -->
+<div class="modal-overlay" id="anomalyModal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Anomalie Rilevate</h3>
+            <button class="modal-close" onclick="closeAnomalyModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.75rem" id="anomalyBaseline">—</p>
+            <div id="anomalyList" style="max-height:380px;overflow:auto"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" onclick="closeAnomalyModal()">Chiudi</button>
+        </div>
+    </div>
+</div>
+
 <footer>
     <div class="container">
         SMDR Call Analytics &mdash; <a href="/">Dashboard</a>
@@ -934,6 +1142,16 @@
     let topDialedChartInstance = null;
     let hourlyDistChartInstance = null;
     let dailyTrendChartInstance = null;
+    let numCatDialedChartInstance = null;
+    let numCatCallerChartInstance = null;
+    let durationHistogramChartInstance = null;
+    let dowChartInstance = null;
+
+    // Last grouping used for the time chart, for drill-down click handling
+    let timeChartGrouping = 'mensile';
+
+    // Anomalies state for the modal
+    let anomalyState = { baseline: null, anomalies: [], sample_days: 0 };
 
     /* ── Chart.js global defaults ─────────────────────── */
     Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif";
@@ -1085,12 +1303,27 @@
             const stats = await response.json();
 
             const fmt = n => n != null ? n.toLocaleString('it-IT') : '0';
-            document.getElementById('totalCalls').textContent    = fmt(stats.total_calls);
+            const pct = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+            const fmtSec = s => {
+                if (!s) return '0s';
+                if (s < 60) return s.toFixed(1) + 's';
+                const m = Math.floor(s / 60);
+                const r = Math.round(s % 60);
+                return `${m}m ${r}s`;
+            };
+
+            // Set core values, preserving the inline delta span
+            setCardValue('totalCalls', fmt(stats.total_calls), 'deltaTotal');
             document.getElementById('inboundCalls').textContent  = fmt(stats.by_direction?.Inbound || 0);
             document.getElementById('outboundCalls').textContent = fmt(stats.by_direction?.Outbound || 0);
-            document.getElementById('internalCalls').textContent = fmt(stats.by_internal?.Yes || stats.by_internal?.Internal || 0);
-            document.getElementById('externalCalls').textContent = fmt(stats.by_internal?.No || 0);
             document.getElementById('totalDuration').textContent = (stats.total_duration_hours || 0).toFixed(2);
+            setCardValue('answerRate', pct(stats.answer_rate), 'deltaAR');
+            setCardValue('acd', fmtSec(stats.acd_seconds), 'deltaACD');
+            setCardValue('asa', fmtSec(stats.asa_seconds), 'deltaASA');
+            document.getElementById('serviceLevel').textContent = pct(stats.service_level);
+            document.getElementById('slDetail').textContent = `% risposte entro ${stats.service_level_threshold_seconds || 20}s`;
+            document.getElementById('answerRateDetail').textContent =
+                `${fmt(stats.answered)} risposte / ${fmt(stats.abandoned)} non risposte`;
             document.getElementById('navTotal').textContent     = `${fmt(stats.total_calls)} chiamate — ${getPeriodLabel(currentPeriod)}`;
 
             const periodLabel = getPeriodLabel(currentPeriod);
@@ -1132,7 +1365,8 @@
 
             // ── Time chart ──────────────────────────────────
             if (timeChartInstance) timeChartInstance.destroy();
-            document.getElementById('timeChartSubLabel').textContent = groupingLabel;
+            timeChartGrouping = groupingLabel;
+            document.getElementById('timeChartSubLabel').textContent = groupingLabel + ' · click per drill-down';
             timeChartInstance = new Chart(document.getElementById('timeChart'), {
                 type: 'bar',
                 data: {
@@ -1141,6 +1375,7 @@
                         label: 'Chiamate',
                         data: chartData,
                         backgroundColor: 'rgba(59,89,152,.75)',
+                        hoverBackgroundColor: 'rgba(59,89,152,1)',
                         borderRadius: 4,
                         borderSkipped: false,
                         maxBarThickness: 32,
@@ -1152,7 +1387,16 @@
                     scales: {
                         y: { beginAtZero: true, grid: { color: '#f0f2f5' } },
                         x: { grid: { display: false } }
-                    }
+                    },
+                    onClick: (evt, elements) => {
+                        if (!elements || !elements.length) return;
+                        const idx = elements[0].index;
+                        const label = timeChartInstance.data.labels[idx];
+                        drillDownToBucket(label, timeChartGrouping);
+                    },
+                    onHover: (evt, elements) => {
+                        evt.native && (evt.native.target.style.cursor = elements.length ? 'pointer' : 'default');
+                    },
                 }
             });
 
@@ -1358,6 +1602,391 @@
         } catch (error) {
             console.error('Error loading stats:', error);
         }
+
+        // Secondary panels — fire in parallel and ignore individual failures
+        await Promise.allSettled([
+            loadHeatmap(),
+            loadNumberCategories(),
+            loadDurationHistogram(),
+            loadDow(),
+            loadAnomalies(),
+            loadComparison(),
+        ]);
+    }
+
+    /* ── Period filter as URLSearchParams ───────────── */
+    function periodParams() {
+        const p = new URLSearchParams();
+        if (periodStartDate) p.append('start_date', periodStartDate);
+        if (periodEndDate)   p.append('end_date', periodEndDate);
+        return p;
+    }
+
+    /* ── Card value setter (preserves the inline delta span) ── */
+    function setCardValue(elId, value, deltaId) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        const delta = deltaId ? document.getElementById(deltaId) : null;
+        el.firstChild && el.firstChild.nodeType === 3
+            ? (el.firstChild.nodeValue = value)
+            : (el.textContent = value);
+        // Re-append delta if it was wiped
+        if (delta && !el.contains(delta)) el.appendChild(delta);
+    }
+
+    /* ── Heatmap (7×24) ─────────────────────────────── */
+    function heatmapColor(value, max) {
+        if (!value || max === 0) return '#f0f2f5';
+        const ratio = value / max;
+        // 0..1 → light to dark blue
+        const alpha = 0.10 + ratio * 0.85;
+        return `rgba(59,89,152,${alpha.toFixed(2)})`;
+    }
+
+    async function loadHeatmap() {
+        try {
+            const url = '/api/stats/heatmap?' + periodParams().toString();
+            const data = await (await fetch(url)).json();
+            const container = document.getElementById('heatmapContainer');
+            const max = data.max || 0;
+
+            let html = '<table class="heatmap-table"><thead><tr><th></th>';
+            for (let h = 0; h < 24; h++) html += `<th>${String(h).padStart(2,'0')}</th>`;
+            html += '</tr></thead><tbody>';
+            for (let d = 0; d < 7; d++) {
+                html += `<tr><td class="dow-label">${escapeHtml(data.days[d])}</td>`;
+                for (let h = 0; h < 24; h++) {
+                    const c = data.grid[d][h];
+                    const tip = `${data.days[d]} ${String(h).padStart(2,'0')}:00 — ${c} chiamate`;
+                    const bg = heatmapColor(c, max);
+                    html += `<td class="cell" data-count="${c}" data-dow="${d}" data-hour="${h}" title="${escapeHtml(tip)}" style="background:${bg}" onclick="drillDownToHour(${d}, ${h})"></td>`;
+                }
+                html += '</tr>';
+            }
+            html += '</tbody></table>';
+            container.innerHTML = html;
+
+            // Legend gradient
+            const legend = document.getElementById('heatmapLegend');
+            let lh = '';
+            for (let i = 0; i <= 5; i++) {
+                lh += `<span style="background:${heatmapColor(i, 5)}"></span>`;
+            }
+            legend.innerHTML = lh;
+
+            document.getElementById('heatmapSubLabel').textContent =
+                max > 0 ? `picco: ${max} chiamate · click su una cella per filtrare` : 'nessun dato';
+        } catch (e) {
+            console.error('heatmap error:', e);
+        }
+    }
+
+    /* ── Number categories chart ───────────────────────── */
+    const CATEGORY_COLORS = {
+        'Mobile':        '#0984e3',
+        'Fisso':         '#3b5998',
+        'Internazionale':'#e17055',
+        'Verde':         '#00b894',
+        'Premium':       '#d63031',
+        'Servizio':      '#fdcb6e',
+        'Interno':       '#6c5ce7',
+        'Sconosciuto':   '#b2bec3',
+        'Altro':         '#dfe6e9',
+    };
+
+    async function loadNumberCategories() {
+        try {
+            const baseParams = periodParams();
+            const [dialed, caller] = await Promise.all([
+                fetch('/api/stats/number-categories?field=dialed_number&' + baseParams.toString()).then(r => r.json()),
+                fetch('/api/stats/number-categories?field=caller&' + baseParams.toString()).then(r => r.json()),
+            ]);
+            renderCategoryChart('numberCategoriesDialedChart', 'numCatDialedChartInstance', dialed.categories || []);
+            renderCategoryChart('numberCategoriesCallerChart', 'numCatCallerChartInstance', caller.categories || []);
+        } catch (e) {
+            console.error('number-categories error:', e);
+        }
+    }
+
+    function renderCategoryChart(canvasId, instanceVar, items) {
+        const labels = items.map(i => i.category);
+        const counts = items.map(i => i.count);
+        const colors = labels.map(l => CATEGORY_COLORS[l] || '#b2bec3');
+        if (window[instanceVar]) window[instanceVar].destroy();
+        window[instanceVar] = new Chart(document.getElementById(canvasId), {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    data: counts,
+                    backgroundColor: colors,
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                }]
+            },
+            options: {
+                responsive: true,
+                cutout: '55%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 8 } },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const item = items[ctx.dataIndex] || {};
+                                const total = counts.reduce((a, b) => a + b, 0) || 1;
+                                const pct = (ctx.parsed / total * 100).toFixed(1);
+                                const ans = item.answered != null ? `, risposte ${item.answered}` : '';
+                                return ` ${ctx.label}: ${ctx.parsed.toLocaleString('it-IT')} (${pct}%${ans})`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /* ── Duration histogram ───────────────────────────── */
+    async function loadDurationHistogram() {
+        try {
+            const url = '/api/stats/duration-histogram?' + periodParams().toString();
+            const data = await (await fetch(url)).json();
+            const buckets = data.buckets || [];
+            const labels = buckets.map(b => b.bucket);
+            const counts = buckets.map(b => b.count);
+            const colors = buckets.map(b => b.bucket === 'Non risposte' ? 'rgba(214,48,49,.75)' : 'rgba(59,89,152,.75)');
+
+            if (durationHistogramChartInstance) durationHistogramChartInstance.destroy();
+            durationHistogramChartInstance = new Chart(document.getElementById('durationHistogramChart'), {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Chiamate', data: counts, backgroundColor: colors, borderRadius: 4, maxBarThickness: 36 }] },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f0f2f5' } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        } catch (e) {
+            console.error('duration-histogram error:', e);
+        }
+    }
+
+    /* ── Day-of-week breakdown ────────────────────────── */
+    async function loadDow() {
+        try {
+            const url = '/api/stats/dow?' + periodParams().toString();
+            const data = await (await fetch(url)).json();
+            const days = data.days || [];
+
+            if (dowChartInstance) dowChartInstance.destroy();
+            dowChartInstance = new Chart(document.getElementById('dowChart'), {
+                type: 'bar',
+                data: {
+                    labels: days.map(d => d.day),
+                    datasets: [
+                        {
+                            label: 'Chiamate',
+                            data: days.map(d => d.total),
+                            backgroundColor: 'rgba(59,89,152,.75)',
+                            borderRadius: 4,
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'Tasso risposta',
+                            data: days.map(d => +(d.answer_rate * 100).toFixed(1)),
+                            type: 'line',
+                            borderColor: '#00b894',
+                            backgroundColor: 'rgba(0,184,148,.18)',
+                            tension: 0.3,
+                            yAxisID: 'y1',
+                            pointRadius: 4,
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 8 } } },
+                    scales: {
+                        y:  { beginAtZero: true, position: 'left', grid: { color: '#f0f2f5' }, title: { display: true, text: 'Chiamate' } },
+                        y1: { beginAtZero: true, max: 100, position: 'right', grid: { display: false }, title: { display: true, text: '% risposta' }, ticks: { callback: v => v + '%' } },
+                        x:  { grid: { display: false } }
+                    }
+                }
+            });
+        } catch (e) {
+            console.error('dow error:', e);
+        }
+    }
+
+    /* ── Anomaly detection ───────────────────────────── */
+    async function loadAnomalies() {
+        try {
+            const data = await (await fetch('/api/stats/anomalies?lookback_days=60&z_threshold=2.0')).json();
+            anomalyState = data;
+            const badge = document.getElementById('anomalyBadge');
+            const count = (data.anomalies || []).length;
+            document.getElementById('anomalyBadgeCount').textContent = count;
+            badge.classList.toggle('visible', count > 0);
+        } catch (e) {
+            console.error('anomalies error:', e);
+        }
+    }
+
+    function openAnomalyModal() {
+        const list = document.getElementById('anomalyList');
+        const baseline = document.getElementById('anomalyBaseline');
+        if (anomalyState.baseline) {
+            baseline.textContent =
+                `Baseline ultimi ${anomalyState.sample_days} giorni: media ${anomalyState.baseline.mean} chiamate/giorno · σ ${anomalyState.baseline.stddev}. Soglia |z| ≥ ${anomalyState.z_threshold ?? 2}.`;
+        } else {
+            baseline.textContent = 'Dati insufficienti per calcolare un baseline.';
+        }
+        const items = anomalyState.anomalies || [];
+        if (items.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-muted);font-size:.85rem">Nessuna anomalia rilevata.</p>';
+        } else {
+            list.innerHTML = items.map(a => {
+                const cls = a.severity === 'high' ? 'up' : 'down';
+                const arrow = a.severity === 'high' ? '▲' : '▼';
+                return `
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .8rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.4rem;cursor:pointer" onclick="drillDownToDay('${escapeHtml(a.day)}')">
+                        <div>
+                            <div style="font-weight:600">${escapeHtml(a.day)}</div>
+                            <div style="font-size:.75rem;color:var(--text-muted)">click per vedere le chiamate del giorno</div>
+                        </div>
+                        <div style="text-align:right">
+                            <div style="font-size:1rem;font-weight:700">${a.count} chiamate</div>
+                            <span class="stat-delta ${cls}">${arrow} z=${a.z_score}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        document.getElementById('anomalyModal').classList.add('active');
+    }
+    function closeAnomalyModal() {
+        document.getElementById('anomalyModal').classList.remove('active');
+    }
+
+    /* ── Period comparison (Δ% on KPI cards) ─────────── */
+    async function loadComparison() {
+        clearDeltas();
+        const params = periodParams();
+        if (!params.has('start_date') || !params.has('end_date')) return;
+        try {
+            const resp = await fetch('/api/stats/compare?' + params.toString());
+            if (!resp.ok) return;
+            const cmp = await resp.json();
+            applyDelta('deltaTotal', cmp.current.total, cmp.previous.total);
+            applyDelta('deltaAR',    cmp.current.answer_rate * 100, cmp.previous.answer_rate * 100, true);
+            applyDelta('deltaACD',   cmp.current.acd_seconds, cmp.previous.acd_seconds);
+            applyDelta('deltaASA',   cmp.current.asa_seconds, cmp.previous.asa_seconds, false, true);
+        } catch (e) {
+            console.error('comparison error:', e);
+        }
+    }
+
+    function clearDeltas() {
+        for (const id of ['deltaTotal', 'deltaAR', 'deltaACD', 'deltaASA']) {
+            const el = document.getElementById(id);
+            if (el) { el.style.display = 'none'; el.textContent = ''; }
+        }
+    }
+
+    function applyDelta(elId, current, previous, isPercentPoints = false, lowerIsBetter = false) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        if (previous == null || previous === 0) { el.style.display = 'none'; return; }
+        const diff = current - previous;
+        let cls = 'flat', arrow = '→';
+        if (Math.abs(diff) > 0.001) {
+            const isUp = diff > 0;
+            cls = (isUp !== lowerIsBetter) ? 'up' : 'down';
+            arrow = isUp ? '▲' : '▼';
+        }
+        let label;
+        if (isPercentPoints) {
+            label = `${arrow} ${Math.abs(diff).toFixed(1)}pp`;
+        } else {
+            const pct = previous !== 0 ? (diff / previous) * 100 : 0;
+            label = `${arrow} ${Math.abs(pct).toFixed(1)}%`;
+        }
+        el.className = 'stat-delta ' + cls;
+        el.textContent = label;
+        el.style.display = 'inline-flex';
+    }
+
+    /* ── Drill-down ─────────────────────────────────── */
+    function drillDownToBucket(label, grouping) {
+        // Translate the bar label into a date range for search.
+        let start, end;
+        if (grouping === 'mensile') {
+            // YYYY-MM
+            const [y, m] = label.split('-').map(Number);
+            start = `${y}-${String(m).padStart(2,'0')}-01`;
+            const last = new Date(y, m, 0).getDate();
+            end = `${y}-${String(m).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
+        } else if (grouping === 'settimanale') {
+            // YYYY-Www → just clear and skip drill-down for weeks
+            return;
+        } else {
+            // giornaliero: label is dd/MM (current year inferred from periodStartDate)
+            const [dd, mm] = label.split('/');
+            const yr = (periodStartDate ? new Date(periodStartDate).getFullYear() : new Date().getFullYear());
+            start = `${yr}-${mm}-${dd}`;
+            end = start;
+        }
+        document.getElementById('start-date').value = start;
+        document.getElementById('end-date').value = end;
+        document.getElementById('callDirection').value = '';
+        document.getElementById('dialedNumber').value = '';
+        document.getElementById('caller').value = '';
+        document.getElementById('account').value = '';
+        searchCalls();
+        document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function drillDownToDay(yyyymmdd) {
+        document.getElementById('start-date').value = yyyymmdd;
+        document.getElementById('end-date').value = yyyymmdd;
+        document.getElementById('callDirection').value = '';
+        document.getElementById('dialedNumber').value = '';
+        document.getElementById('caller').value = '';
+        document.getElementById('account').value = '';
+        closeAnomalyModal();
+        searchCalls();
+        document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function drillDownToHour(dow, hour) {
+        // Picks the most recent ISO day matching dow within the active period.
+        // Simplification: just show last 7 days filtered. We pre-fill caller/dialed empty.
+        // For an accurate per-cell drill-down we'd need server help; here we just
+        // jump to the search panel.
+        document.getElementById('start-date').value = '';
+        document.getElementById('end-date').value = '';
+        searchCalls();
+        document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    /* ── CSV export ─────────────────────────────────── */
+    function downloadCsv(evt) {
+        if (evt) evt.preventDefault();
+        const params = new URLSearchParams(currentFilters || {});
+        // Strip empty values
+        for (const [k, v] of [...params]) {
+            if (!v) params.delete(k);
+        }
+        const url = '/api/export/calls.csv' + (params.toString() ? '?' + params.toString() : '');
+        // Trigger download via temporary anchor
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     }
 
     /* ── Search ─────────────────────────────────────── */
