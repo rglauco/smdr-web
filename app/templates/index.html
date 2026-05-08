@@ -852,7 +852,7 @@
             <div class="stat-icon dur">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
-            <div class="stat-label">Durata Totale (ore)</div>
+            <div class="stat-label">Durata Totale</div>
             <div class="stat-value" id="totalDuration">—</div>
         </div>
         <div class="stat-card fade-up delay-3">
@@ -1474,18 +1474,20 @@
 
     async function loadAllStats() {
         try {
-            // Build stats URL with period filters
-            let statsUrl = '/statistics';
-            const params = new URLSearchParams();
-            if (periodStartDate) params.append('start_date', periodStartDate);
-            if (periodEndDate)   params.append('end_date', periodEndDate);
-            if (params.toString()) statsUrl += '?' + params.toString();
+            const params = periodParams();
+            const statsUrl = '/statistics' + (params.toString() ? '?' + params.toString() : '');
 
             const response = await fetch(statsUrl);
             const stats = await response.json();
 
             const fmt = n => n != null ? n.toLocaleString('it-IT') : '0';
             const pct = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+            const fmtHours = h => {
+                const totalMin = Math.round(h * 60);
+                const hrs = Math.floor(totalMin / 60);
+                const mins = totalMin % 60;
+                return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
+            };
             const fmtSec = s => {
                 if (!s) return '0s';
                 if (s < 60) return s.toFixed(1) + 's';
@@ -1498,7 +1500,7 @@
             setCardValue('totalCalls', fmt(stats.total_calls), 'deltaTotal');
             document.getElementById('inboundCalls').textContent  = fmt(stats.by_direction?.Inbound || 0);
             document.getElementById('outboundCalls').textContent = fmt(stats.by_direction?.Outbound || 0);
-            document.getElementById('totalDuration').textContent = (stats.total_duration_hours || 0).toFixed(2);
+            document.getElementById('totalDuration').textContent = fmtHours(stats.total_duration_hours || 0);
             setCardValue('answerRate', pct(stats.answer_rate), 'deltaAR');
             setCardValue('acd', fmtSec(stats.acd_seconds), 'deltaACD');
             setCardValue('asa', fmtSec(stats.asa_seconds), 'deltaASA');
