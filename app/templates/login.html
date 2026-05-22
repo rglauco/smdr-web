@@ -15,18 +15,34 @@
             --surface: #131929;
             --surface-raised: #1a2238;
             --text: #e2e8f0;
-            --text-secondary: #64748b;
-            --text-muted: #334155;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
             --border: #1e2d47;
             --danger: #ef4444;
             --mono: 'IBM Plex Mono', 'Courier New', monospace;
             --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --dot: #1e2d47;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --primary: #2563eb;
+                --primary-light: #3b82f6;
+                --bg: #f1f5f9;
+                --surface: #ffffff;
+                --surface-raised: #f8fafc;
+                --text: #0f172a;
+                --text-secondary: #475569;
+                --text-muted: #94a3b8;
+                --border: #e2e8f0;
+                --danger: #dc2626;
+                --dot: #cbd5e1;
+            }
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: var(--sans);
             background: var(--bg);
-            background-image: radial-gradient(circle, #1e2d47 1px, transparent 1px);
+            background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
             background-size: 28px 28px;
             color: var(--text);
             min-height: 100vh;
