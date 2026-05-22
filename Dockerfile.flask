@@ -3,20 +3,27 @@ FROM python:3.14-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Copy all application files
+# Copy application files
 COPY app/ ./app/
 COPY database.py ./database.py
 COPY server/ ./server/
 COPY run.py ./run.py
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-RUN mkdir -p /app/data /app/data/reports
+RUN mkdir -p /app/data /app/data/reports \
+    && groupadd -r smdr && useradd -r -g smdr -d /app -s /sbin/nologin smdr \
+    && chown -R smdr:smdr /app \
+    && chmod +x /docker-entrypoint.sh
 
 EXPOSE 5000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')" || exit 1
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["python", "run.py"]
