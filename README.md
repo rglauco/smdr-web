@@ -1,250 +1,170 @@
-# SMDR Python Application
+# SMDR Analytics
 
-Porting dell'applicazione C# SMDR in Python/Flask/SQLite3.
+Applicazione Python/Flask per la raccolta e l'analisi dei record telefonici SMDR (Station Message Detail Recording). Due servizi condividono un unico database SQLite:
 
-## 📋 Caratteristiche
+- **TCP Server** (`server/tcpsmdrserver.py`, porta 3000) — riceve i record CSV dal centralino e li persiste nel DB.
+- **Web App** (`app/main.py`, porta 5000) — dashboard interattiva, ricerca avanzata e API JSON.
 
-### TCP SMDR Server
-- Porting fedele del server TCP originale in C#
+## Caratteristiche
+
+### TCP Server
 - Ascolta sulla porta 3000
-- Riceve record SMDR come CSV — un record valido è composto da **esattamente 30 campi separati da virgola su una sola riga** (parser permissivo che accetta anche record con ≥6 campi)
-- Archivia automaticamente i dati nel database SQLite3 e tiene un dump grezzo mensile in `data/reports/YYYY.MM.csv`
+- Accetta record SMDR in formato CSV — un record valido ha **esattamente 30 campi** su una sola riga; parser permissivo di riserva per record con ≥ 6 campi
+- Archivia i dati in SQLite e produce un dump grezzo mensile in `data/reports/YYYY.MM.csv`
+- Gestione connessioni concorrenti via thread
 
-### Flask Web Application
-- Web UI interattiva per esplorare i dati
-- Ricerche avanzate con filtri multipli
-- Statistiche visive (grafici Chart.js)
-- Autenticazione via sessione Flask, credenziali da `.env`
-- Gestione timezone configurabile a runtime (DST automatico)
+### Web App
+- Interfaccia dark/day con toggle, font IBM Plex Mono/Sans
+- Dashboard con KPI (totale chiamate, tasso di risposta, ACD, ASA, service level)
+- Grafici interattivi: andamento temporale, distribuzione oraria, heatmap settimanale, distribuzione durate, flussi E/I, carico estensioni, top account/numeri
+- Rilevamento anomalie e confronto tra periodi
+- Ricerca con filtri multipli ed export CSV
+- Dettaglio per numero: KPI, trend, controparti, ultime chiamate
+- Autenticazione via sessione Flask
+- Timezone e modalità timestamp configurabili a runtime
 
 ### Database
-- SQLite3 integrato
-- Indici ottimizzati per query rapide
-- Supporto per timestamp e duration
-- Tabella `app_settings` per configurazione runtime (timezone, modalità timestamp)
+- SQLite3 con WAL mode e busy timeout per accesso concorrente
+- Tabella `smdr_calls` (~30 colonne, una per campo SMDR + `raw_data`)
+- Tabella `app_settings` per configurazione runtime (`timezone`, `timestamp_mode`)
 
-## 📁 Struttura Progetto
+## Struttura
 
 ```
 smdr-web/
-├── app/                           # Flask application
-│   ├── main.py                    # Flask web server e API JSON
+├── app/
+│   ├── main.py                # Flask web server e API JSON
 │   └── templates/
-│       ├── index.html             # Web UI principale
-│       └── login.html             # Form di login
-├── server/                        # TCP SMDR server
-│   ├── tcpsmdrserver.py           # TCP server (porting fedele del C#)
-│   └── read.py                    # Utility CLI per leggere il DB
-├── data/                          # SQLite database + reports CSV mensili
-│   └── reports/                   # Dump grezzi YYYY.MM.csv
-├── database.py                    # Schema, query, settings, timezone helpers
-├── run.py                         # Entry point: avvia Flask + TCP server
-├── check_db.py                    # Script diagnostico per il DB
-├── test_e2e.py                    # Test manuale end-to-end (TCP → DB)
-├── client_test.py                 # Client TCP di test
-├── test_record_client.py          # Invio record SMDR di esempio
-├── requirements.txt               # Dipendenze Python
-├── Dockerfile.flask               # Dockerfile per Flask
-├── Dockerfile.tcpserver           # Dockerfile per TCP server
-├── docker-compose.yml             # Configurazione Docker Compose
-└── README.md                      # Questo file
+│       ├── index.html         # Web UI (dashboard + ricerca)
+│       └── login.html         # Form di login
+├── server/
+│   ├── tcpsmdrserver.py       # TCP server SMDR
+│   └── read.py                # Utility CLI per leggere il DB
+├── data/                      # Database SQLite + report CSV mensili
+│   └── reports/               # Dump grezzi YYYY.MM.csv
+├── database.py                # Schema, query, helpers timezone
+├── run.py                     # Entry point: Flask + TCP server nello stesso processo
+├── docker-entrypoint.sh       # Fix permessi volume Docker (gosu)
+├── Dockerfile.flask
+├── Dockerfile.tcpserver
+├── docker-compose.yml
+├── check_db.py                # Script diagnostico DB
+├── test_e2e.py                # Test manuale TCP → DB
+└── test_record_client.py      # Invio record SMDR di esempio
 ```
 
-## 🚀 Avvio Locale
+## Avvio
 
-### Opzione 1: Uso di `run.py`
+### Locale
 
 ```bash
-cd smdr-python
+# Flask + TCP server in un unico processo
 python run.py
+
+# Oppure separatamente
+python -m app.main          # solo Flask  (porta 5000)
+python server/tcpsmdrserver.py   # solo TCP    (porta 3000)
 ```
 
-Questo avvierà sia il server Flask (port 5000) che il TCP Server (port 3000) nello stesso processo (TCP server in thread di background, Flask sul thread principale).
+### Docker
 
-### Opzione 2: Avvio Separato
-
-```bash
-# Terminal 1 - Flask Web App
-cd smdr-python
-python -m app.main
-
-# Terminal 2 - TCP SMDR Server
-cd smdr-python
-python server/tcpsmdrserver.py
-```
-
-### Opzione 3: Docker Compose
-
-```bash
-cd smdr-python
-docker-compose up -d
-```
-
-This avvierà:
-- Container Flask: http://localhost:5000
-- Container TCP Server: port 3000
-
-## 📡 Formato SMDR
-
-Il server TCP accetta record nel seguente formato:
-```
-CallStart,ConnectedTime,RingTime,Caller,Direction,DialedNumber,Account,IsInternal,CallID,...
-```
-
-**Esempio completo:**
-```
-28/04/2026 12:34:56,00:02:35,10,12345,I,+39 0123456789,ACCT001,Y,123456789,,
-DTMF,Nome1,Phone1,Nome2,Phone2,...,Y,CODE,user,15.50,EUR,...
-```
-
-## 🔍 Funzionalità Web
-
-### Dashboard
-- Panoramica statistica delle chiamate
-- Grafici: chiamate per mese, direzione, top clienti, top numeri chiamati
-
-### API Endpoints
-
-Pagine HTML (richiedono login via sessione):
-- `GET /` - Pagina principale
-- `GET /login` / `POST /login` - Form di login
-- `GET /logout` - Logout
-
-API JSON (richiedono login, restituiscono 401 se non autenticati):
-- `GET /search` - Ricerca chiamate con filtri
-- `GET /statistics` - Statistiche con filtri di periodo
-- `GET /calls/<id>` - Dettagli di una chiamata specifica
-- `GET /api/months` - Mesi disponibili (ultimi 24)
-- `GET /api/daily` - Chiamate di oggi (timezone configurato)
-- `GET /api/daily/<year>` - Chiamate di un anno
-- `GET /api/daily/<year>/<month>` - Chiamate di un mese
-- `GET /api/daily/<year>/<month>/<day>` - Chiamate di un giorno
-- `GET /api/stats/hourly` - Distribuzione oraria (con `start_date` / `end_date`)
-- `GET /api/settings` - Legge timezone e `timestamp_mode`
-- `POST /api/settings` - Aggiorna timezone e/o `timestamp_mode`
-
-Endpoint pubblico:
-- `GET /api/health` - Health check (non richiede autenticazione)
-
-### Filtri di Ricerca
-- Direzione (Inbound/Outbound)
-- Data di inizio
-- Data di fine
-- Numero chiamato
-- Chiamante
-- Account
-- Is Internal (Y/N)
-
-## 🛠️ Comandi Docker
-
-### Costruire e avviare
 ```bash
 docker-compose up -d
-```
 
-### Vedere log
-```bash
+# Log
 docker-compose logs -f smdr-webapp
 docker-compose logs -f smdr-tcpserver
-```
 
-### Stop
-```bash
+# Stop
 docker-compose down
+
+# Rebuild immagini
+docker-compose build --no-cache && docker-compose up -d
 ```
 
-### Riavviare
-```bash
-docker-compose restart
-```
+Il database è persistito nel volume Docker `smdr-data`. L'entrypoint sistema i permessi della directory montata prima di cedere i privilegi all'utente `smdr`.
 
-### Rimuovere e ricreare
-```bash
-docker-compose down -v
-docker-compose up -d
-```
+## Configurazione
 
-## 📊 Statistiche Calcolate
-
-- Totale chiamate
-- Chiamate per direzione (Inbound/Outbound)
-- Chiamate per internal (Internal/External)
-- Top 10 account
-- Top 10 chiamanti
-- Top 10 numeri chiamati
-- Totale durata connessione (ore)
-- Totale tempo di suono (minuti)
-- Chiamate per mese (ultimi 12 mesi)
-
-## 🔧 Utilità Database
-
-Per leggere il database da command line dentro il container:
+Crea un file `.env` nella root (non committarlo):
 
 ```bash
-# Entrare nel container
-docker-compose exec smdr-webapp bash
-
-# Eseguire script di lettura
-python -c "from database import get_db_connection; print(get_db_connection().execute('SELECT * FROM smdr_calls').fetchone())"
-```
-
-Oppure usare lo script read.py:
-
-```bash
-# Vedi ultimi 10 record
-python server/read.py 10
-
-# Vedi statistiche
-python server/read.py stats
-```
-
-## 📝 Verifica del Codice C#
-
-Il codice C# è stato esaminato scrupolosamente:
-
-1. **SMDR_Server.cs**: Server TCP che ascolta sulla porta 3000
-   - ✅ Accetta connessioni TCP
-   - ✅ Legge buffer di 4096 byte
-   - ✅ Riconosce record completi (30 campi separati da virgola)
-   - ✅ Salva record nella forma semplificata (6 campi)
-   - ✅ Logga record grezzi
-   - ✅ Usa thread per gestire clients
-
-2. **SMDRRecord.cs**: Struttura dati del record
-   - ✅ Campi corretti: CallStart, ConnectedTime, RingTime, Caller, CallDirection, DialedNumber
-   - ✅ Metodo toString() con formato CSV corretto
-
-3. **Service1.cs**: Service Windows
-   - ✅ Avvia server TCP su port 3000
-   - ✅ Usa EventLog per log
-
-## 🔒 Autenticazione
-
-L'interfaccia web e tutte le API JSON (eccetto `/api/health`) richiedono login via sessione Flask. Le credenziali sono lette da variabili d'ambiente / file `.env`:
-
-```bash
-# .env (NON committare)
 SMDR_USERNAME=admin
 SMDR_PASSWORD=cambiami
 SMDR_SECRET_KEY=stringa-casuale-lunga
 ```
 
-Default se non impostate: `admin` / `smdr2024` (da cambiare in produzione). Il `SMDR_SECRET_KEY` viene generato casualmente a ogni riavvio se non specificato — questo invalida le sessioni esistenti, quindi vale la pena fissarlo.
+Se non impostati, i default sono `admin` / `smdr2024`. Il `SMDR_SECRET_KEY` viene generato casualmente a ogni avvio se assente — questo invalida le sessioni esistenti, vale la pena fissarlo.
 
-I decoratori applicati:
-- `@login_required` sulle pagine HTML → redirect a `/login`
-- `@api_login_required` sulle API JSON → risposta 401
+**Timezone e modalità timestamp** si configurano a runtime dalla UI (badge orologio in navbar) o via API:
 
-## 🌍 Timezone e Timestamp
+```bash
+curl -X POST http://localhost:5000/api/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"timezone":"Europe/Rome","timestamp_mode":"utc"}'
+```
 
-I timestamp ricevuti dal PBX vengono salvati nel DB così come arrivano (naive). L'interpretazione e la conversione per il frontend sono guidate da due chiavi nella tabella `app_settings`, modificabili a runtime tramite `POST /api/settings`:
+- `timezone` — nome IANA, default `Europe/Rome`. Gestisce DST automaticamente.
+- `timestamp_mode` — `utc` se il centralino invia timestamp UTC, `local` se li invia già in orario locale.
 
-- `timezone` — nome IANA (default `Europe/Rome`), risolto via `zoneinfo.ZoneInfo`. Gestisce DST automaticamente.
-- `timestamp_mode` — `utc` (default) se il PBX invia timestamp UTC, `local` se invia già nella timezone configurata.
+## API
 
-`localize_timestamp()` in `database.py` è l'unico punto che converte i timestamp grezzi in stringhe ISO 8601 timezone-aware per le risposte API. Le route Flask usano `_localize_call` / `_localize_calls` prima di restituire JSON.
+Tutte le API JSON richiedono autenticazione (401 se non autenticato), eccetto `/api/health`.
 
-## 📚 Dipendenze
+| Metodo | Endpoint | Descrizione |
+|--------|----------|-------------|
+| `GET` | `/` | Dashboard principale |
+| `GET` | `/search` | Ricerca chiamate (`call_direction`, `start_date`, `end_date`, `dialed_number`, `caller`, `account`, `flow_type`, `limit`, `offset`) |
+| `GET` | `/statistics` | Statistiche aggregate (stessi filtri di `/search`) |
+| `GET` | `/calls/<id>` | Dettaglio singola chiamata |
+| `GET` | `/api/settings` | Legge timezone e timestamp_mode |
+| `POST` | `/api/settings` | Aggiorna timezone e/o timestamp_mode |
+| `GET` | `/api/stats/hourly` | Distribuzione oraria |
+| `GET` | `/api/stats/heatmap` | Heatmap giorno × ora |
+| `GET` | `/api/stats/duration-histogram` | Istogramma durate |
+| `GET` | `/api/stats/number-categories` | Categorie numeri (mobile/fisso/…) |
+| `GET` | `/api/stats/dow` | Distribuzione per giorno della settimana |
+| `GET` | `/api/stats/anomalies` | Rilevamento anomalie (z-score) |
+| `GET` | `/api/stats/compare` | Confronto periodo corrente vs precedente |
+| `GET` | `/api/stats/flows` | Distribuzione flussi E→I / I→E / I→I / E→E |
+| `GET` | `/api/stats/extension-load` | Carico per estensione |
+| `GET` | `/api/stats/transfers` | Trasferimenti rilevati per prossimità temporale |
+| `GET` | `/api/stats/number-detail` | KPI + grafici per singolo numero |
+| `GET` | `/api/export/calls.csv` | Export CSV delle chiamate filtrate |
+| `GET` | `/api/daily[/<year>[/<month>[/<day>]]]` | Chiamate per giorno/mese/anno |
+| `GET` | `/api/months` | Mesi disponibili (ultimi 24) |
+| `GET` | `/api/health` | Health check (pubblico) |
+
+## Formato SMDR
+
+Il TCP server accetta record nel formato CSV a 30 campi emesso dal centralino:
+
+```
+CallStart,ConnectedTime,RingTime,Caller,Direction,DialedNumber,Account,IsInternal,CallID,...
+```
+
+La data usa il formato `DD/MM/YYYY HH:MM:SS`. Il parser prova anche ISO e US come fallback.
+
+## Utilità da riga di comando
+
+```bash
+# Ultimi N record
+python server/read.py 10
+
+# Statistiche aggregate
+python server/read.py stats
+
+# Diagnostica DB
+python check_db.py
+
+# Test end-to-end (invia un record via TCP e verifica il DB)
+python test_e2e.py
+
+# Invio record di esempio
+python test_record_client.py
+```
+
+## Dipendenze
 
 ```
 Flask==3.0.0
@@ -253,24 +173,4 @@ python-dotenv==1.0.1
 Flask-Login==0.6.3
 ```
 
-> Nota: `Flask-Login` è elencato ma non attualmente usato — l'auth è implementata con sessioni Flask "vanilla". Mantenuto per eventuale migrazione futura.
-
-Basato su Python 3.11+ (le immagini Docker usano `python:3.14-slim`).
-
-## 🐛 Troubleshooting
-
-### Porta già in uso
-```bash
-# Windows
-netstat -ano | findstr :5000
-# kill process con PID trovato
-
-# Linux/Mac
-lsof -ti:5000 | xargs kill -9
-```
-
-### Database permission error
-Assicurarsi che il volume Docker abbia i permessi corretti (default docker-compose gestisce questo).
-
-### Ticket closed channel
-Se il canale verra' chiuso prematuramente, verrà inviato un backup completo prima della chiusura.
+Python 3.11+ (le immagini Docker usano `python:3.14-slim`).
