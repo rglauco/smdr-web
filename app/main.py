@@ -36,6 +36,7 @@ from database import (
     get_transfer_matrix,
     iter_calls_for_export,
     get_number_stats,
+    get_number_calls_paginated,
 )
 
 # Load environment variables from .env
@@ -582,6 +583,30 @@ def get_number_detail_route():
         field = 'dialed_number'
     result = get_number_stats(number, field, _parse_filters_from_args())
     result['recent_calls'] = _localize_calls(result['recent_calls'])
+    return jsonify(result)
+
+
+@app.route('/api/stats/number-calls')
+@api_login_required
+def get_number_calls_route():
+    """Paginated call list for a specific number with optional search/date/direction filters."""
+    number = request.args.get('number', '').strip()
+    field  = request.args.get('field', 'dialed_number')
+    if not number:
+        return jsonify({'error': 'Parametro number richiesto'}), 400
+    try:
+        limit  = min(int(request.args.get('limit',  20)), 100)
+        offset = max(int(request.args.get('offset',  0)),  0)
+    except ValueError:
+        limit, offset = 20, 0
+    search         = request.args.get('search', '').strip() or None
+    start_date     = request.args.get('start_date', '').strip() or None
+    end_date       = request.args.get('end_date',   '').strip() or None
+    call_direction = request.args.get('call_direction', '').strip() or None
+
+    result = get_number_calls_paginated(number, field, limit, offset,
+                                        search, start_date, end_date, call_direction)
+    result['calls'] = _localize_calls(result['calls'])
     return jsonify(result)
 
 

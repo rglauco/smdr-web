@@ -695,6 +695,8 @@
         .badge-inbound  { background: rgba(16,185,129,.15); color: #10b981; }
         .badge-outbound { background: rgba(249,115,22,.15);  color: #f97316; }
         .id-muted { font-size: .68rem; color: var(--text-muted); }
+        .num-link { cursor: pointer; color: var(--primary); }
+        .num-link:hover { text-decoration: underline; }
 
         /* ── Pagination / Load more ──────────────────────── */
         .load-more-row {
@@ -1212,6 +1214,20 @@
         </div>
     </div>
 
+    <!-- ═══ Number lookup ═══ -->
+    <div class="period-bar fade-up" style="margin-top:1.5rem">
+        <span class="period-bar-label">Cerca Numero</span>
+        <input type="text" id="numLookupInput" placeholder="es. 0123456789 oppure 201"
+               style="padding:.32rem .65rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark;width:220px"
+               onkeydown="if(event.key==='Enter')numLookup()">
+        <select id="numLookupField"
+                style="padding:.32rem .5rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark">
+            <option value="dialed_number">Numero Chiamato</option>
+            <option value="caller">Chiamante</option>
+        </select>
+        <button class="btn btn-primary" style="padding:.35rem .9rem;font-size:.82rem" onclick="numLookup()">Dettaglio</button>
+    </div>
+
     <!-- ═══ Search ═══ -->
     <div class="section">
         <div class="section-heading">Ricerca Chiamate</div>
@@ -1411,8 +1427,31 @@
                 <div id="ndCounterparts"></div>
             </div>
             <div class="nd-section" style="margin-bottom:0">
-                <div class="nd-chart-title">Ultime 20 chiamate</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem">
+                    <span class="nd-chart-title" style="margin-bottom:0">Chiamate <span id="ndCallsCount" style="font-weight:400;color:var(--text-muted)"></span></span>
+                    <div style="display:flex;gap:.35rem;flex-wrap:wrap;align-items:center">
+                        <input type="text" id="ndCallsSearch" placeholder="cerca numero / nome…"
+                               style="padding:.3rem .6rem;border:1px solid var(--border);border-radius:4px;font-size:.72rem;font-family:var(--mono);background:var(--bg);color:var(--text);width:160px;color-scheme:dark"
+                               onkeydown="if(event.key==='Enter')loadNdCalls(true)">
+                        <select id="ndCallsDir"
+                                style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.72rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark">
+                            <option value="">Tutte</option>
+                            <option value="Inbound">Inbound</option>
+                            <option value="Outbound">Outbound</option>
+                        </select>
+                        <input type="date" id="ndCallsFrom"
+                               style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.72rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark"
+                               title="Da data">
+                        <input type="date" id="ndCallsTo"
+                               style="padding:.3rem .5rem;border:1px solid var(--border);border-radius:4px;font-size:.72rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark"
+                               title="A data">
+                        <button class="btn btn-primary" style="padding:.3rem .75rem;font-size:.72rem" onclick="loadNdCalls(true)">Cerca</button>
+                    </div>
+                </div>
                 <div id="ndRecentCalls" style="overflow-x:auto"></div>
+                <div id="ndLoadMoreRow" style="display:none;text-align:center;padding:.6rem 0">
+                    <button class="btn btn-secondary" style="font-size:.78rem" onclick="loadMoreNdCalls()">Carica altri risultati</button>
+                </div>
             </div>
         </div>
         <div class="modal-footer">
@@ -1431,6 +1470,13 @@
     let currentPage = 0;
     let currentTotal = 0;
     let currentFilters = {};
+
+    // Number-detail paginated calls state
+    const ND_CALLS_PAGE = 20;
+    let ndCurrentNumber = null;
+    let ndCurrentField  = null;
+    let ndCallsOffset   = 0;
+    let ndCallsTotal    = 0;
 
     // Period state
     let currentPeriod = 'all';
@@ -2258,9 +2304,16 @@
 
     /* ── Number detail modal ────────────────────────── */
     async function openNumDetail(number, field) {
+        ndCurrentNumber = number;
+        ndCurrentField  = field;
         document.getElementById('numDetailTitle').textContent = number;
         document.getElementById('ndKpis').innerHTML = '<p style="color:var(--text-secondary);grid-column:1/-1;padding:.5rem 0">Caricamento...</p>';
         document.getElementById('numDetailModal').classList.add('active');
+        // Reset calls search controls
+        document.getElementById('ndCallsSearch').value = '';
+        document.getElementById('ndCallsDir').value = '';
+        document.getElementById('ndCallsFrom').value = '';
+        document.getElementById('ndCallsTo').value = '';
 
         try {
             const p = new URLSearchParams({ number, field });
@@ -2272,10 +2325,89 @@
         } catch (e) {
             document.getElementById('ndKpis').innerHTML = '<p style="color:var(--accent-red);grid-column:1/-1">Errore nel caricamento dei dati.</p>';
         }
+        loadNdCalls(true);
     }
 
     function closeNumDetailModal() {
         document.getElementById('numDetailModal').classList.remove('active');
+    }
+
+    async function loadNdCalls(reset) {
+        if (!ndCurrentNumber) return;
+        if (reset) ndCallsOffset = 0;
+        const p = new URLSearchParams({
+            number: ndCurrentNumber,
+            field:  ndCurrentField || 'dialed_number',
+            limit:  ND_CALLS_PAGE,
+            offset: ndCallsOffset,
+        });
+        const search = document.getElementById('ndCallsSearch').value.trim();
+        const dir    = document.getElementById('ndCallsDir').value;
+        const from   = document.getElementById('ndCallsFrom').value;
+        const to     = document.getElementById('ndCallsTo').value;
+        if (search) p.append('search', search);
+        if (dir)    p.append('call_direction', dir);
+        if (from)   p.append('start_date', from);
+        if (to)     p.append('end_date', to);
+
+        if (reset) {
+            document.getElementById('ndRecentCalls').innerHTML =
+                '<p style="color:var(--text-muted);font-size:.82rem;padding:.4rem 0">Caricamento…</p>';
+            document.getElementById('ndLoadMoreRow').style.display = 'none';
+        }
+        try {
+            const data = await (await fetch('/api/stats/number-calls?' + p.toString())).json();
+            ndCallsTotal = data.total;
+            document.getElementById('ndCallsCount').textContent =
+                `(${ndCallsTotal.toLocaleString('it-IT')} chiamate)`;
+            if (reset) {
+                if (!data.calls.length) {
+                    document.getElementById('ndRecentCalls').innerHTML =
+                        '<p style="color:var(--text-muted);font-size:.82rem;padding:.4rem 0">Nessuna chiamata</p>';
+                } else {
+                    document.getElementById('ndRecentCalls').innerHTML = renderNdCallRows(data.calls, true);
+                }
+            } else {
+                const tbody = document.getElementById('ndRecentCalls').querySelector('tbody');
+                if (tbody) tbody.insertAdjacentHTML('beforeend', renderNdCallRows(data.calls, false));
+            }
+            ndCallsOffset += data.calls.length;
+            document.getElementById('ndLoadMoreRow').style.display =
+                ndCallsOffset < ndCallsTotal ? '' : 'none';
+        } catch (e) {
+            if (reset) {
+                document.getElementById('ndRecentCalls').innerHTML =
+                    '<p style="color:var(--accent-red);font-size:.82rem;padding:.4rem 0">Errore nel caricamento.</p>';
+            }
+        }
+    }
+
+    function loadMoreNdCalls() { loadNdCalls(false); }
+
+    function renderNdCallRows(calls, withWrapper) {
+        const fmtDur = s => { s = Math.round(s||0); return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`; };
+        const fmtTs  = ts => (ts||'').replace('T',' ').slice(0,16);
+        const rows = calls.map(c => `
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:.32rem .4rem;font-size:.8rem;white-space:nowrap">${fmtTs(c.call_start)}</td>
+                <td style="padding:.32rem .4rem;font-size:.8rem"><span class="badge badge-${(c.call_direction||'').toLowerCase()}">${escapeHtml(c.call_direction||'—')}</span></td>
+                <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums;cursor:pointer;color:var(--primary)" onclick="openNumDetail('${escapeHtml(c.caller||'')}','caller')" title="Dettaglio ${escapeHtml(c.caller||'')}">${escapeHtml(c.caller||'—')}</td>
+                <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums;cursor:pointer;color:var(--primary)" onclick="openNumDetail('${escapeHtml(c.dialed_number||'')}','dialed_number')" title="Dettaglio ${escapeHtml(c.dialed_number||'')}">${escapeHtml(c.dialed_number||'—')}</td>
+                <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right">${c.connected_time > 0 ? fmtDur(c.connected_time) : '<span style="color:var(--accent-red)">—</span>'}</td>
+                <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right;color:var(--text-muted)">${c.ring_time > 0 ? Math.round(c.ring_time)+'s att.' : ''}</td>
+            </tr>`).join('');
+        if (!withWrapper) return rows;
+        return `<table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:2px solid var(--border)">
+                <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Data/Ora</th>
+                <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Dir.</th>
+                <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Chiamante</th>
+                <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Numero</th>
+                <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Durata</th>
+                <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Attesa</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
     }
 
     function renderNumDetail(data) {
@@ -2422,33 +2554,6 @@
                 </table>`;
         }
 
-        // Recent calls table
-        const fmtTs = ts => (ts || '').replace('T', ' ').slice(0, 16);
-        if (!data.recent_calls.length) {
-            document.getElementById('ndRecentCalls').innerHTML = '<p style="color:var(--text-muted);font-size:.82rem;padding:.4rem 0">Nessuna chiamata</p>';
-        } else {
-            const rows2 = data.recent_calls.map(c => `
-                <tr style="border-bottom:1px solid var(--border)">
-                    <td style="padding:.32rem .4rem;font-size:.8rem;white-space:nowrap">${fmtTs(c.call_start)}</td>
-                    <td style="padding:.32rem .4rem;font-size:.8rem"><span class="badge badge-${(c.call_direction||'').toLowerCase()}">${escapeHtml(c.call_direction||'—')}</span></td>
-                    <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums">${escapeHtml(c.caller||'—')}</td>
-                    <td style="padding:.32rem .4rem;font-size:.8rem;font-variant-numeric:tabular-nums">${escapeHtml(c.dialed_number||'—')}</td>
-                    <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right">${c.connected_time > 0 ? fmtDur(c.connected_time) : '<span style="color:var(--accent-red)">—</span>'}</td>
-                    <td style="padding:.32rem .4rem;font-size:.8rem;text-align:right;color:var(--text-muted)">${c.ring_time > 0 ? Math.round(c.ring_time) + 's att.' : ''}</td>
-                </tr>`).join('');
-            document.getElementById('ndRecentCalls').innerHTML = `
-                <table style="width:100%;border-collapse:collapse">
-                    <thead><tr style="border-bottom:2px solid var(--border)">
-                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Data/Ora</th>
-                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Dir.</th>
-                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Chiamante</th>
-                        <th style="text-align:left;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Numero</th>
-                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Durata</th>
-                        <th style="text-align:right;padding:.3rem .4rem;font-size:.72rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px">Attesa</th>
-                    </tr></thead>
-                    <tbody>${rows2}</tbody>
-                </table>`;
-        }
     }
 
     /* ── Period comparison (Δ% on KPI cards) ─────────── */
@@ -2840,8 +2945,8 @@
                     <br><span class="id-muted">${escapeHtml(call.id)}</span>
                 </td>
                 <td><span class="badge badge-${(call.call_direction||'').toLowerCase()}">${escapeHtml(call.call_direction||'\u2014')}</span></td>
-                <td>${escapeHtml(call.caller || '\u2014')}</td>
-                <td>${escapeHtml(call.dialed_number || '\u2014')}</td>
+                <td><span class="num-link" onclick="openNumDetail('${escapeHtml(call.caller||'')}','caller')">${escapeHtml(call.caller || '\u2014')}</span></td>
+                <td><span class="num-link" onclick="openNumDetail('${escapeHtml(call.dialed_number||'')}','dialed_number')">${escapeHtml(call.dialed_number || '\u2014')}</span></td>
                 <td>${escapeHtml(call.account || '\u2014')}</td>
                 <td>${formatDuration(call.connected_time)}</td>
                 <td>${formatDuration(call.ring_time)}</td>
@@ -2875,8 +2980,8 @@
                             <br><span class="id-muted">${escapeHtml(call.id)}</span>
                         </td>
                         <td><span class="badge badge-${(call.call_direction||'').toLowerCase()}">${escapeHtml(call.call_direction||'\u2014')}</span></td>
-                        <td>${escapeHtml(call.caller || '\u2014')}</td>
-                        <td>${escapeHtml(call.dialed_number || '\u2014')}</td>
+                        <td><span class="num-link" onclick="openNumDetail('${escapeHtml(call.caller||'')}','caller')">${escapeHtml(call.caller || '\u2014')}</span></td>
+                        <td><span class="num-link" onclick="openNumDetail('${escapeHtml(call.dialed_number||'')}','dialed_number')">${escapeHtml(call.dialed_number || '\u2014')}</span></td>
                         <td>${escapeHtml(call.account || '\u2014')}</td>
                         <td>${formatDuration(call.connected_time)}</td>
                         <td>${formatDuration(call.ring_time)}</td>
@@ -3024,6 +3129,12 @@
     document.getElementById('tzModal').addEventListener('click', function(e) {
         if (e.target === this) closeTzModal();
     });
+    function numLookup() {
+        const num = document.getElementById('numLookupInput').value.trim();
+        const field = document.getElementById('numLookupField').value;
+        if (num) openNumDetail(num, field);
+    }
+
     document.getElementById('numDetailModal').addEventListener('click', function(e) {
         if (e.target === this) closeNumDetailModal();
     });

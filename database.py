@@ -1178,6 +1178,52 @@ def get_number_stats(number, field='dialed_number', filters=None):
     }
 
 
+def get_number_calls_paginated(number, field='dialed_number', limit=20, offset=0,
+                               search=None, start_date=None, end_date=None,
+                               call_direction=None):
+    """Paginated call list for a specific number, with optional search filters."""
+    if field not in ('dialed_number', 'caller'):
+        field = 'dialed_number'
+
+    conditions = [f'{field} = ?']
+    params = [number]
+
+    if start_date:
+        conditions.append('call_start >= ?')
+        params.append(start_date)
+    if end_date:
+        conditions.append('call_start <= ?')
+        params.append(end_date)
+    if call_direction:
+        conditions.append('call_direction = ?')
+        params.append(call_direction)
+    if search:
+        conditions.append('(caller LIKE ? OR dialed_number LIKE ? OR account LIKE ?'
+                          ' OR party1_name LIKE ? OR party2_name LIKE ?)')
+        s = f'%{search}%'
+        params.extend([s, s, s, s, s])
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(f'SELECT COUNT(*) FROM smdr_calls {where}', params)
+    total = cursor.fetchone()[0]
+
+    cursor.execute(f"""
+        SELECT id, call_start, call_direction, caller, dialed_number,
+               connected_time, ring_time, party1_name, party2_name, account
+        FROM smdr_calls {where}
+        ORDER BY call_start DESC
+        LIMIT ? OFFSET ?
+    """, params + [limit, offset])
+    calls = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    return {'calls': calls, 'total': total, 'limit': limit, 'offset': offset}
+
+
 def iter_calls_for_export(filters=None):
     """
     Generator that yields call rows (as dicts) for streaming CSV export.
