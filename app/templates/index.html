@@ -786,7 +786,6 @@
             cursor: default;
             transition: transform .12s, box-shadow .12s;
         }
-        .heatmap-table td.cell[data-count]:not([data-count="0"]) { cursor: pointer; }
         .heatmap-table td.cell:hover { transform: scale(1.2); box-shadow: 0 0 0 2px var(--primary); }
         .heatmap-legend {
             display: flex;
@@ -1027,6 +1026,99 @@
         </div>
     </div>
 
+    <!-- ═══ Number lookup ═══ -->
+    <div class="period-bar fade-up" style="margin-top:1.5rem">
+        <span class="period-bar-label">Cerca Numero</span>
+        <input type="text" id="numLookupInput" placeholder="es. 0123456789 oppure 201"
+               style="padding:.32rem .65rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark;width:220px"
+               onkeydown="if(event.key==='Enter')numLookup()">
+        <select id="numLookupField"
+                style="padding:.32rem .5rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark">
+            <option value="dialed_number">Numero Chiamato</option>
+            <option value="caller">Chiamante</option>
+        </select>
+        <button class="btn btn-primary" style="padding:.35rem .9rem;font-size:.82rem" onclick="numLookup()">Dettaglio</button>
+    </div>
+
+    <!-- ═══ Search ═══ -->
+    <div class="section">
+        <div class="section-heading">Ricerca Chiamate</div>
+    </div>
+    <div class="search-panel fade-up delay-5">
+        <div class="search-grid">
+            <div class="form-group">
+                <label for="callDirection">Direzione</label>
+                <select id="callDirection">
+                    <option value="">Tutte</option>
+                    <option value="Inbound">Inbound</option>
+                    <option value="Outbound">Outbound</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="start-date">Data Inizio</label>
+                <input type="date" id="start-date">
+            </div>
+            <div class="form-group">
+                <label for="end-date">Data Fine</label>
+                <input type="date" id="end-date">
+            </div>
+            <div class="form-group">
+                <label for="dialedNumber">Numero Chiamato</label>
+                <input type="text" id="dialedNumber" placeholder="Es: 02…">
+            </div>
+            <div class="form-group">
+                <label for="caller">Chiamante</label>
+                <input type="text" id="caller" placeholder="Es: 201">
+            </div>
+            <div class="form-group">
+                <label for="account">Account</label>
+                <input type="text" id="account" placeholder="Es: 100">
+            </div>
+            <div class="form-group" style="flex-direction:row; gap:.5rem; align-self:end;">
+                <button class="btn btn-primary" onclick="searchCalls()">Cerca</button>
+                <button class="btn btn-secondary" onclick="resetSearch()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Results ═══ -->
+    <div id="loadingBox" class="loading-box">
+        <div class="spinner"></div>
+        <div>Caricamento dati…</div>
+    </div>
+
+    <div class="results-panel" id="resultsContainer" style="display:none; margin-top:1.5rem;">
+        <div class="results-header">
+            <h3>Risultati</h3>
+            <div style="display:flex;align-items:center;gap:1rem">
+                <span class="results-count" id="resultsCount"></span>
+                <a href="#" class="btn-export" id="exportCsvBtn" onclick="downloadCsv(event)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Esporta CSV
+                </a>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data Inizio</th>
+                        <th>Direzione</th>
+                        <th>Chiamante</th>
+                        <th>Numero Chiamato</th>
+                        <th>Account</th>
+                        <th>Connessione</th>
+                        <th>Suono</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody"></tbody>
+            </table>
+        </div>
+        <div class="load-more-row" id="loadMoreContainer" style="display:none">
+            <button class="btn btn-secondary" onclick="loadMore()">Carica altri risultati</button>
+        </div>
+    </div>
+
     <!-- ═══ Charts ═══ -->
     <div class="section">
         <div class="section-heading">Andamento &amp; Direzione</div>
@@ -1072,7 +1164,7 @@
     <div class="chart-card fade-up delay-4" style="margin-bottom:1.25rem">
         <div class="chart-title">
             <span>Intensità chiamate per giorno della settimana e ora</span>
-            <span class="chart-sub-label" id="heatmapSubLabel">click su una cella per filtrare</span>
+            <span class="chart-sub-label" id="heatmapSubLabel">&nbsp;</span>
         </div>
         <div class="heatmap-wrap">
             <div id="heatmapContainer"></div>
@@ -1211,99 +1303,6 @@
                 <span class="chart-sub-label" id="topDialedSubLabel">tutto il periodo</span>
             </div>
             <canvas id="topDialedChart"></canvas>
-        </div>
-    </div>
-
-    <!-- ═══ Number lookup ═══ -->
-    <div class="period-bar fade-up" style="margin-top:1.5rem">
-        <span class="period-bar-label">Cerca Numero</span>
-        <input type="text" id="numLookupInput" placeholder="es. 0123456789 oppure 201"
-               style="padding:.32rem .65rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark;width:220px"
-               onkeydown="if(event.key==='Enter')numLookup()">
-        <select id="numLookupField"
-                style="padding:.32rem .5rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.82rem;font-family:var(--mono);background:var(--bg);color:var(--text);color-scheme:dark">
-            <option value="dialed_number">Numero Chiamato</option>
-            <option value="caller">Chiamante</option>
-        </select>
-        <button class="btn btn-primary" style="padding:.35rem .9rem;font-size:.82rem" onclick="numLookup()">Dettaglio</button>
-    </div>
-
-    <!-- ═══ Search ═══ -->
-    <div class="section">
-        <div class="section-heading">Ricerca Chiamate</div>
-    </div>
-    <div class="search-panel fade-up delay-5">
-        <div class="search-grid">
-            <div class="form-group">
-                <label for="callDirection">Direzione</label>
-                <select id="callDirection">
-                    <option value="">Tutte</option>
-                    <option value="Inbound">Inbound</option>
-                    <option value="Outbound">Outbound</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="start-date">Data Inizio</label>
-                <input type="date" id="start-date">
-            </div>
-            <div class="form-group">
-                <label for="end-date">Data Fine</label>
-                <input type="date" id="end-date">
-            </div>
-            <div class="form-group">
-                <label for="dialedNumber">Numero Chiamato</label>
-                <input type="text" id="dialedNumber" placeholder="Es: 02…">
-            </div>
-            <div class="form-group">
-                <label for="caller">Chiamante</label>
-                <input type="text" id="caller" placeholder="Es: 201">
-            </div>
-            <div class="form-group">
-                <label for="account">Account</label>
-                <input type="text" id="account" placeholder="Es: 100">
-            </div>
-            <div class="form-group" style="flex-direction:row; gap:.5rem; align-self:end;">
-                <button class="btn btn-primary" onclick="searchCalls()">Cerca</button>
-                <button class="btn btn-secondary" onclick="resetSearch()">Reset</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ═══ Results ═══ -->
-    <div id="loadingBox" class="loading-box">
-        <div class="spinner"></div>
-        <div>Caricamento dati…</div>
-    </div>
-
-    <div class="results-panel" id="resultsContainer" style="display:none; margin-top:1.5rem;">
-        <div class="results-header">
-            <h3>Risultati</h3>
-            <div style="display:flex;align-items:center;gap:1rem">
-                <span class="results-count" id="resultsCount"></span>
-                <a href="#" class="btn-export" id="exportCsvBtn" onclick="downloadCsv(event)">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    Esporta CSV
-                </a>
-            </div>
-        </div>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Data Inizio</th>
-                        <th>Direzione</th>
-                        <th>Chiamante</th>
-                        <th>Numero Chiamato</th>
-                        <th>Account</th>
-                        <th>Connessione</th>
-                        <th>Suono</th>
-                    </tr>
-                </thead>
-                <tbody id="resultsTableBody"></tbody>
-            </table>
-        </div>
-        <div class="load-more-row" id="loadMoreContainer" style="display:none">
-            <button class="btn btn-secondary" onclick="loadMore()">Carica altri risultati</button>
         </div>
     </div>
 
@@ -2069,7 +2068,7 @@
 
     /* ── Heatmap (7×24) ─────────────────────────────── */
     function heatmapColor(value, max) {
-        if (!value || max === 0) return '#1a2238';
+        if (!value || max === 0) return '#ffffff';
         const ratio = value / max;
         const alpha = 0.15 + ratio * 0.85;
         return `rgba(61,142,248,${alpha.toFixed(2)})`;
@@ -2091,7 +2090,7 @@
                     const c = data.grid[d][h];
                     const tip = `${data.days[d]} ${String(h).padStart(2,'0')}:00 — ${c} chiamate`;
                     const bg = heatmapColor(c, max);
-                    html += `<td class="cell" data-count="${c}" data-dow="${d}" data-hour="${h}" title="${escapeHtml(tip)}" style="background:${bg}" onclick="drillDownToHour(${d}, ${h})"></td>`;
+                    html += `<td class="cell" data-count="${c}" data-dow="${d}" data-hour="${h}" title="${escapeHtml(tip)}" style="background:${bg}"></td>`;
                 }
                 html += '</tr>';
             }
@@ -2107,7 +2106,7 @@
             legend.innerHTML = lh;
 
             document.getElementById('heatmapSubLabel').textContent =
-                max > 0 ? `picco: ${max} chiamate · click su una cella per filtrare` : 'nessun dato';
+                max > 0 ? `picco: ${max} chiamate` : 'nessun dato';
         } catch (e) {
             console.error('heatmap error:', e);
         }
